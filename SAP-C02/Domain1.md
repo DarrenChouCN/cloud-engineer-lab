@@ -639,3 +639,161 @@ Encode every baseline control—SG rules, KMS keys, SCPs, logging stacks—into 
 Close the loop by running IAM Access Analyzer to catch unintended exposure, IAM Policy Simulator for pre-deployment permission tests, and Audit Manager or custom Security Hub controls for ongoing compliance scoring. Feed findings into ticketing or automated remediation so each iteration measurably tightens least-privilege and governance posture.
 
 ## Task 1.3: Design reliable and resilient architectures
+
+### Recovery Objectives (RTO & RPO)
+
+**Recovery Time Objective (RTO):** the longest a workload can remain unavailable before the business impact is unacceptable.
+
+**Recovery Point Objective (RPO):** the maximum age of data you are prepared to lose after recovery.
+In AWS you record these targets per-workload as a resiliency policy in AWS Resilience Hub; the hub then evaluates whether your current architecture (across Regions, AZs, backups, etc.) satisfies those numbers.
+
+**Typical use cases**
+
+- Defining SLAs/SLOs for customer-facing services before choosing a disaster-recovery pattern.
+
+- Comparing backup & restore, pilot light, warm standby, and multi-site active/active to balance cost against resiliency.
+
+- Automating drift detection: Resilience Hub runs a daily assessment and flags when architectural changes violate the declared RTO/RPO.
+
+**Key points**
+
+- Know the four canonical AWS DR patterns and the ball-park RTO/RPO each one can meet.
+
+  - **Backup & Restore:** Lowest-cost DR choice. Expect hours-to-days RTO/RPO because you rebuild the stack from snapshots. Answer key words: AWS Backup, S3 cross-Region replication, Glacier Deep Archive. Pick it in exam stems that say “non-critical, tolerate multi-hour outage, minimise cost.”
+  - **Pilot Light:** Keep only the stateful core (DBs, queues) replicated—usually with Elastic Disaster Recovery (DRS)—and power up the rest on demand. Targets sub-hour RTO and <15-minute RPO. Choose this when the question needs faster recovery than backup/restore but still stresses cost control.
+  - **Warm Standby:** A slimmed-down copy of the full stack is always running at low capacity in another Region; autoscaling or resizing makes it production-sized during failover. Think minutes-level RTO and single-digit-minute RPO. Exam trigger phrases: “quick customer-facing recovery” or “accept brief brownout, budget is mid-range.”
+  - **Multi-Site / Active-Active:** All Regions handle live traffic simultaneously using Route 53 weighted/latency routing, Aurora Global Database, DynamoDB Global Tables. Delivers seconds (or zero) RTO and near-zero RPO at the highest cost and complexity. Tick this when the scenario calls for “no downtime, no data loss” or mentions strict financial/regulatory SLAs.
+  - **Memory hook:** map the four patterns to a spectrum—cheap/slow ➜ expensive/instant—then match the RTO/RPO numbers the exam gives you to the first pattern that meets them.
+
+- How data-replication techniques map to RPO targets (e.g., Amazon RDS cross-Region read replica vs. snapshot copy).
+- Using Amazon Route 53 health checks & weighted/latency policies for automated Region fail-over.
+- Cost optimisation: choose the lowest-cost pattern that still meets the stated RTO/RPO.
+- Resilience Hub’s policy evaluation is now on the exam (Feb 2025 blueprint update).
+
+**Exam tip:**
+
+Q: A payment-processing workload has RTO = 2 hours and RPO = 15 minutes. Which disaster-recovery strategy meets these requirements at the lowest cost?
+A: C. Warm standby satisfies RTO ≤ 2 h and RPO ≤ 15 min while costing markedly less than a fully active/active multi-site setup.
+
+**Note:**
+AWS Resilience Hub is a design-time resiliency assessor: given RTO/RPO targets declared in a resiliency policy, it statically inspects the architecture’s redundancy, backup cadence, health checks, and automation runbooks—optionally exercising them with Fault Injection Simulator—to confirm the design can theoretically meet those objectives, then issues a compliance report and gap recommendations, while real-time detection and recovery remain the jobs of CloudWatch alarms, Route 53 failover, Auto Scaling, SSM Automation, and similar services.
+
+Backup & Restore – non-critical workloads fine with ≥ 8 h downtime and ≥ 24 h data loss; Pilot Light – keep core databases warm for apps needing ≤ 8 h recovery while rebuilding stateless tiers; Warm Standby – run a downsized duplicate stack to fail over within ≤ 1 h and ≤ 30 min data loss; Multi-site Active/Active – mission-critical systems (e.g., payments, trading) demanding near-zero RTO/RPO served concurrently from multiple Regions.
+
+### Data Backup & Restoration Essentials
+
+AWS Backup now supports organization-wide policies through a delegated admin in AWS Organizations, giving security and compliance teams a single pane to roll out backup plans across all accounts and opt-in Regions. For ransomware defence, Vault Lock enforces WORM-style immutability—once the grace period expires, no user (not even the root account) can alter lifecycle settings or delete protected recovery points. The service also offers file-, volume-, instance-, and service-level restores, letting architects align each data layer to its own RTO/RPO targets.
+
+**Typical use cases**
+
+- **Governance at scale:** central security team applies a standard 35-day retain-in-Region + 180-day copy-to-DR-Region policy to every account; regional delegates can’t weaken it.
+- **Ransomware resilience:** lock critical backups in Compliance mode so attackers or rogue admins cannot purge them—even with the root key.
+- **Granular recovery:** restore a single lost folder from an EFS backup, a full EC2 AMI after corruption, or an entire RDS cluster after regional failure, each against its own RTO/RPO budget.
+
+**Key points**
+
+- Centralised control → “Use AWS Backup with an Organizations delegated admin” is the go-to answer whenever the stem mentions governance or multiple accounts/Regions.
+- Vault Lock → know Governance vs Compliance modes; both block deletes, but Compliance also blocks policy changes after the lock period starts.
+- Cross-Region & cross-account copy → required for DR and ransomware isolation; can be scheduled in the same backup plan.
+- Restore granularity → map file-level restores to lenient RTO/RPO, full-instance or cross-Region restores to tighter objectives.
+- Security best practices → isolate backup vaults, encrypt with KMS CMKs, automate tagging/IaC, and test restores regularly; “untested backup = no backup” is a favourite distractor.
+
+**Exam tip**
+
+Q: Your CISO mandates that no administrator—including the root user—can delete backups within the first 90 days, and backup governance must cover every account and opt-in Region in the organization. Which solution meets both requirements?
+A: B. Only a delegated-admin backup plan plus Vault Lock guarantees org-wide enforcement and root-proof immutability at the backup-vault level.
+
+**Note:**
+Data backup and restoration generally come into play when a critical event occurs—such as an accidental deletion, ransomware encryption, or a Region-wide outage—that threatens to push the workload beyond its defined RTO/RPO.
+When monitoring and alerting systems (CloudWatch Alarms feeding PagerDuty/Opsgenie) fire, on-call engineers must respond immediately, using a full observability stack—CloudWatch Logs, X-Ray traces, centralized log analytics—to isolate the fault. They then leverage AWS Backup recovery points, cross-Region snapshots, and SSM Automation or Lambda-driven runbooks to restore the data and rebuild the stack, bringing the service back online within the targeted recovery objectives.
+
+### Designing the DR Solution
+
+1. **Workload tiering:** Classify each workload by business criticality and attach hard numeric RTO/RPO targets—these form the non-negotiable contract for the design.
+
+2. **Pattern selection:** Choose the cheapest DR pattern that still satisfies those numbers; if an inherited design misses a target, prefer a surgical fix (e.g., enable DynamoDB PITR) rather than a wholesale upgrade.
+
+3. **Sizing & automation:** Scale up vertically for non-shardable stateful tiers (RDS, EBS IOPS) and scale out horizontally for stateless or partition-able layers via Auto Scaling, Lambda concurrency, or DynamoDB on-demand; encode fail-over runbooks in SSM or Lambda.
+
+4. **Validation & chaos testing:** Use Resilience Hub to verify policy compliance, then run AWS Fault Injection Simulator experiments to prove the architecture can meet its declared RTO/RPO under real fault conditions.
+
+### Automatic Recovery in the Architecture
+
+End-to-end self-healing hinges on three pillars: (1) built-in Multi-AZ redundancy for stateful services such as RDS Multi-AZ DB clusters, EFS One Zone-IA with asynchronous replication, and ElastiCache Multi-AZ replicas; (2) automatic compute recovery, using EC2 Auto Recovery and Auto Scaling health checks to replace impaired instances; and (3) intelligent traffic steering, where Route 53 Application Recovery Controller (ARC) can shift—or even auto-shift—traffic away from a failing Availability Zone within minutes. AWS Elastic Disaster Recovery (DRS) adds one-click failovers and non-disruptive recovery drills to prove the plan works without downtime.
+
+**Typical use cases**
+
+- Keep a production PostgreSQL database available during an AZ outage via RDS Multi-AZ with automatic writer promotion.
+- Auto-recover a critical EC2 bastion host when its status checks fail.
+- Use ARC zonal autoshift so AWS automatically drains traffic from a potentially impaired zone and shifts it back once healthy.
+- Run quarterly DRS recovery drills to generate compliance evidence without impacting users.
+
+**Key points**
+
+- Multi-AZ == default answer when the stem says “high availability within a Region.”
+- EC2 Auto Recovery only covers hardware/software impairment—still pair it with Auto Scaling for full capacity recovery.
+- ARC zonal shift vs. autoshift: manual shift is operator-driven; autoshift is AWS-driven, opt-in, and reverses automatically.
+- DRS drills satisfy “prove the DR plan works during business hours with zero downtime.”
+- Cost nuance: Multi-AZ for ElastiCache adds replica nodes but is still cheaper than cross-Region replication when only zonal resilience is required.
+
+**Exam tip**
+
+Q: Your web tier must survive an Availability-Zone failure without manual intervention and without changing DNS records. Which service provides the simplest solution?
+A: Correct answer: C. ARC zonal autoshift automatically drains traffic from an unhealthy AZ and routes it to healthy AZs, meeting the zero-touch requirement at the AZ level.
+
+**Note:**
+Automatic Recovery ensures that workloads can withstand component- or zone-level failures without manual intervention, by leveraging built-in redundancy, compute self-healing, and intelligent traffic routing. The key design principle is that each service type must pair with the appropriate recovery mechanism—whether it’s EC2 Auto Recovery for impaired instances, Multi-AZ deployments for stateful services, or Route 53 ARC for AZ-level traffic shifts—all chosen to meet RTO/RPO targets at the lowest possible cost.
+
+### Scale-Up vs Scale-Out
+
+**Scale-Up (Vertical):** move the same workload onto a larger instance or storage class (for example `db.r6g.large → db.r6g.4xlarge`). This adds CPU/RAM/IOPS quickly but keeps the single-node footprint—AZ-level failure still takes it down, and you will eventually hit the biggest size AWS offers.
+
+**Scale-Out (Horizontal):** add more nodes or shards behind a load balancer or partition key. Capacity grows linearly, resilience improves (nodes can fail independently), but the application must be stateless or replicate data across nodes. Dynamic, policy-driven scaling is a Well-Architected best practice.
+
+**Typical use cases**
+
+- Give a lift-and-shift Oracle database an instant 4× memory boost by scaling up while you refactor.
+- Run a web/API layer in an Auto Scaling group across three AZs; let Lambda or Fargate tasks fan out horizontally on demand.
+- Combine both: start vertical to hit launch deadlines, then redesign for horizontal + Multi-AZ/Region once traffic stabilises.
+
+**key points**
+
+- Trade-off matrix: Scale-up = fast boost, limited ceiling, single-AZ blast radius; Scale-out = code change + replication cost, but higher resilience and unlimited headroom.
+- Hybrid pattern frequently “exam-correct”: “Lift-and-shift first, scale-up now, plan scale-out + Multi-AZ/Region for long-term reliability.”
+- Dynamic scaling (Auto Scaling groups, Aurora Serverless v2, DynamoDB on-demand) is explicitly cited in the Well-Architected Reliability pillar—know the services that do it natively.
+- A vertical scaling answer that ignores the single-AZ failure domain will often be a distractor when the stem mentions RTO goals < a few minutes.
+- Horizontal designs must handle state: use RDS/Aurora read replicas, ElastiCache cluster mode, or S3/EFS for shared storage.
+
+**Exam tip**
+
+Q: The company lifted a monolithic Java app onto a single `m5.2xlarge` EC2 instance in one AZ. Peak traffic now quadruples CPU every Friday. The CTO wants a quick, cost-effective fix this week, but also a road-map to tolerate an AZ outage within six months. What architecture satisfies both goals?
+A: Immediately scale the instance up to an `m5.8xlarge` (vertical), then plan to re-platform the web layer into an Auto Scaling group spanning three AZs with shared session storage (horizontal + Multi-AZ) in the next release cycle.
+
+**Note:**
+Scale-Up increases the capacity of a single resource by upgrading its size (e.g., larger instance type or database class). It's quick to implement and ideal for short-term performance gains, especially during lift-and-shift migrations. However, it retains a single point of failure and has physical scaling limits.
+Scale-Out distributes workload across multiple nodes or partitions, improving fault tolerance, scalability, and availability. It requires stateless design or proper state management (e.g., replication, shared storage), but enables horizontal growth and better resilience.
+In SAP-C02, hybrid solutions are often preferred: start with Scale-Up for speed, then move toward Scale-Out with Multi-AZ or Multi-Region architectures to meet long-term RTO/RPO and reliability goals.
+
+### Crafting the Backup & Restoration Strategy
+
+A robust backup plan follows the 3-2-1 rule: keep 3 copies of the data, on 2 different storage media, with 1 copy off-Region or off-account. On AWS that usually means primary data in S3 Standard, short-term replicas in S3 Standard-IA, and long-term, off-Region copies in S3 Glacier Deep Archive, the lowest-cost cold tier at roughly $0.00099/GB-month. Lifecycle policies then transition data through these tiers—and eventually delete it—to meet retention mandates such as GDPR or APRA record-keeping rules.
+
+**Typical use cases**
+
+- **Regulated workloads:** Apply multi-account AWS Backup plans that copy nightly snapshots to a dedicated compliance account, lock them with Vault Lock, and transition to Glacier Deep Archive after 90 days.
+
+- **Ransomware defence:** Off-account recovery points plus Vault Lock ensure an attacker who compromises the source account cannot delete the last-resort copy.
+
+- **Quarterly DR drills:** Use AWS Elastic Disaster Recovery (DRS) “non-disruptive recovery drills” to launch isolated test instances and verify that point-in-time copies boot correctly without affecting production.
+
+**key points**
+
+- 3-2-1 = default answer whenever the stem mentions “best-practice backup posture.”
+- Lifecycle policies: map the retention period to the legal requirement (e.g., 7 years for APRA), then auto-delete; deleting too early violates compliance and is a common distractor.
+- Cross-account restore: AWS Backup (2024+) can now perform direct restores into a separate account via delegated-admin permissions—know that “no custom IAM plumbing” is required.
+- Untested backup = no backup: Resilience Hub resiliency score audits or DRS recovery drills are mandatory to turn theory into evidence.
+
+**Exam tip**
+
+Q: A financial regulator requires that transaction logs be stored for seven years, with an off-account immutable copy and quarterly proof that the data can be restored. Which solution meets the requirement at the lowest cost?
+A: Use an AWS Backup plan that (1) copies daily snapshots to a designated compliance account, (2) locks them with Vault Lock in Compliance mode, (3) applies a lifecycle rule to transition to S3 Glacier Deep Archive after 90 days and retain for seven years, and (4) schedules quarterly DRS non-disruptive recovery drills to generate restore evidence.
