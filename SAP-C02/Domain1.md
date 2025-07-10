@@ -797,3 +797,165 @@ A robust backup plan follows the 3-2-1 rule: keep 3 copies of the data, on 2 dif
 
 Q: A financial regulator requires that transaction logs be stored for seven years, with an off-account immutable copy and quarterly proof that the data can be restored. Which solution meets the requirement at the lowest cost?
 A: Use an AWS Backup plan that (1) copies daily snapshots to a designated compliance account, (2) locks them with Vault Lock in Compliance mode, (3) applies a lifecycle rule to transition to S3 Glacier Deep Archive after 90 days and retain for seven years, and (4) schedules quarterly DRS non-disruptive recovery drills to generate restore evidence.
+
+## Task 1.4: Design a multi-account AWS environment
+
+### AWS Organizations vs. AWS Control Tower
+
+AWS Organizations supplies the multi-account hierarchy (management account → OUs → member accounts) and lets you enforce preventive policies with Service Control Policies (SCPs), which centrally restrict the maximum permissions for IAM principals across the organization.
+
+AWS Control Tower builds on Organizations but automates a “landing zone”: it creates dedicated Log Archive and Audit accounts inside a Security OU, provisions baseline logging/identity stacks, and applies guardrails—preventive (SCP-based), detective (AWS Config rules), and proactive (CloudFormation hooks). Landing-zone versions are upgradeable (v3.x current) through the console or API.
+
+**Typical use cases**
+
+- Greenfield enterprise looking for day-1 governance: choose Control Tower for turnkey account structure, logging, and guardrails.
+- Mature organization needing fine-grained permission ceilings or bespoke OU layouts: stay with Organizations and craft custom SCP sets.
+- Ongoing compliance: run Control Tower guardrail reports while still using Organizations to delegate admin rights and attach SCP exceptions to specific OUs.
+
+**key points**
+
+- Control Tower ≠ replacement for Organizations; it extends it with automation and three guardrail types (preventive = deny before action, detective = detect after, proactive = block non-compliant CloudFormation resources).
+- Know that Control Tower always creates the Log Archive and Audit shared accounts automatically.
+- SCPs don’t grant permissions—they limit them; they don’t apply to the management account.
+- Landing-zone version upgrades are fully managed; skipping versions (e.g., 3.1 → 3.3) auto-deploys intermediates.
+- Exam pattern: Guardrails on day 1 → Control Tower; existing org, tight permission boundaries → SCPs.
+
+**Exam tip**
+Q: A new healthcare startup wants centralized logging, MFA enforcement, and strict region deny controls before it onboards any developer accounts. Which solution meets the requirement with the least manual effort?
+A: Deploy AWS Control Tower and enable the mandatory preventive, detective, and proactive guardrails; Control Tower sets up the Log Archive and Audit accounts and applies the region-deny preventive control automatically.
+
+**Note:**
+AWS Organizations provides a multi-account hierarchy (management account → OUs → member accounts) and enforces organization-wide permission ceilings through Service Control Policies (SCPs). It suits large or mature enterprises that already have multiple AWS accounts and need fine-grained, centrally managed restrictions—e.g., denying non-approved Regions or limiting certain OUs to read-only access—while letting each account maintain its own IAM policies beneath the SCP “ceiling.”
+
+AWS Control Tower builds on Organizations but automates the entire landing-zone setup for greenfield or rapidly scaling enterprises that want governance on day one. It creates dedicated Log Archive and Audit accounts, provisions baseline logging/identity stacks, and applies out-of-the-box guardrails—preventive (SCP-based), detective (AWS Config rules), and proactive (CloudFormation hooks)—all managed through versioned landing-zone upgrades.
+
+### Choosing an Account Structure (Skill)
+
+AWS exams expect you to recognise the standard landing-zone OU layout and map it to three business drivers: operational isolation, billing separation, and compliance scope. The canonical structure looks like:
+
+| OU                                   | Typical accounts                                 | Primary purpose                    |
+| ------------------------------------ | ------------------------------------------------ | ---------------------------------- |
+| **Security**                         | Audit, GuardDuty, Security Lake                  | Central threat tooling             |
+| **Log Archive**                      | Org-level S3 buckets for CloudTrail / AWS Config | Immutable evidence storage         |
+| **Infrastructure / Shared Services** | Networking, AD, Transit Gateway                  | Foundations used by every workload |
+| **Sandbox / DevTest**                | Per-team dev accounts                            | Low-risk experimentation           |
+| **Workloads**                        | Prod, Staging, specialised BU accounts           | Actual business apps               |
+
+**Exam cue**
+When a stem says something like “PCI workloads must be isolated from non-PCI workloads” or “Finance needs separate billing while sharing the org’s Transit Gateway,” you are expected to:
+
+1. Create or choose the right OU (e.g., a dedicated PCI OU under Workloads).
+2. Attach stricter SCPs or Control Tower guardrails only to that OU.
+3. Keep common services (logs, networking) in the central OUs so they remain available across the org.
+
+**SAP exam pattern**
+
+- Multiple-choice scenario: “Where should the new Machine-Learning prod account live to keep dev/test isolated and still share the central Security Lake?”- Correct answer: Place it under the Workloads OU; leave Security tooling in the Security OU and logs in Log Archive.
+- Drag-and-drop: map given accounts to OUs, then pick which SCPs apply to each OU (e.g., region deny on Sandbox, stricter KMS policy on PCI).
+
+**Key take-aways**
+
+- Security & Log Archive OUs are always present in a Control Tower landing zone.
+- Use nested OUs (e.g., Workloads → PCI OU) when compliance scope diverges.
+- SCPs apply at the OU level; accounts inherit the most restrictive policy chain.
+- The “right” answer is the one that meets isolation, billing, and compliance with minimum complexity—often a single new OU plus targeted SCPs, not a brand-new organization.
+
+### Central Logging & Event Notifications
+
+AWS CloudTrail Organization Trail delivers every account’s API events to a single S3 bucket in the Log Archive OU; CloudTrail Lake lets you run SQL-style queries on those events without copying data.
+
+Amazon Security Lake (GA) aggregates security, VPC Flow, and DNS logs from all accounts into a data lake in OCSF format, ready for SIEM or analytics pipelines.
+
+Amazon EventBridge cross-account event bus lets you fan-in operational events (e.g., EC2 state change, CodePipeline failure, custom app events) to a central Security/Ops account and then route them to SNS, Chatbot, or Lambda responders.
+
+**Typical use cases**
+
+- Send every account’s CloudTrail logs to an immutable S3 bucket with Glacier Deep Archive lifecycle for seven-year retention.
+- Ingest GuardDuty findings, VPC Flow Logs, and third-party IDS feeds into Security Lake, then run Athena or Splunk queries across the normalized OCSF tables.
+- Forward all “Instance-state-change-notification” events to a central EventBridge bus; trigger an SNS topic that pages the on-call engineer via Slack Chatbot.
+
+**key points**
+
+- Organization Trail → Log Archive is the expected answer for “immutable, organization-wide audit logs.”
+- CloudTrail Lake is billed per ingested/read TB but avoids inter-account data movement; know its “lake-query” advantage.
+- Security Lake converts multi-source security logs into OCSF and stores them in your account (not a regional service bucket).
+- EventBridge cross-account rule + central bus is the right pick when the stem says “near real-time failure detection across all accounts.”
+- For alert fan-out, pair EventBridge with SNS or Chatbot; for long-term compliance evidence, pair CloudTrail with S3 versioning + Glacier.
+
+**Exam tip**
+
+Q: A company must detect `EC2 instance state changes` across 50 member accounts in under one minute and notify the on-call team in Slack. Which solution meets the requirement with the least operational overhead?
+A: Create cross-account EventBridge rules in each member account that forward EC2 Instance-state-change events to a central EventBridge bus in the Security account, then route them to an SNS topic integrated with AWS Chatbot for Slack notifications.
+
+**Note:**
+In AWS, CloudTrail only logs basic events by default—security teams must proactively configure an Organization Trail to enable centralized auditing across accounts for compliance and forensic purposes. Security Lake is entirely opt-in and must be explicitly enabled by security analysts or the CISO team, aggregating logs from multiple sources into OCSF format for SIEM and analytics. Meanwhile, EventBridge provides the event bus out of the box, but DevOps or SRE teams must define cross-account rules and targets to enable real-time alerts and automated responses across the organization.
+
+### Resource Sharing at Scale
+
+AWS Resource Access Manager (RAM) is the primary service for sharing resources—VPC subnets, Transit Gateways, Route 53 Resolver rules, License Manager configurations, and more—across accounts or entire OUs without needing cross-account peering or duplicated infrastructure.
+
+At scale, you combine RAM with CloudFormation StackSets (delegated admin) to push identical IaC stacks to dozens of accounts, and AWS Service Catalog portfolios to let teams self-provision governed products. VPC sharing keeps a single “hub” VPC while placing ENIs from multiple workloads (accounts) in those subnets, simplifying network management and cost allocation.
+
+**Typical use cases**
+
+- Central networking team owns a shared-services VPC (IGW, NAT, inspection appliances) and shares its private subnets via RAM to application accounts.
+- Central IT publishes a hardened EKS or RDS blueprint via Service Catalog; dev teams across 40 accounts can deploy it without gaining template edit rights.
+- Cloud Center of Excellence uses StackSets with Organizations targets to roll out an SSM Agent baseline or GuardDuty-enabler stack to every existing and future account.
+
+**key points**
+
+- VPC sharing via RAM is the go-to answer when a single VPC must host ENIs from “multiple workloads / separate billing accounts.”
+- RAM share scopes: individual accounts, OU targets, or entire Organization; tag-based automatic association now supported (2024 update).
+- StackSets delegated admin removes the need to log in as the management account; choose “Service-managed permissions” for automatic OU propagation.
+- Service Catalog portfolios enforce standardized products; stack sets alone don’t give self-service with constraints.
+- RAM cannot share S3 buckets or IAM roles—watch for distractors; Transit Gateway, Route 53 Resolver rules, and License configs are fair game.
+
+**Exam tip**
+Q: The networking team maintains one inspection VPC and needs application teams in 25 member accounts to deploy their ENIs into the same private subnets while keeping separate billing and IAM boundaries. Which solution meets the requirement with minimal operational overhead?
+A: Use AWS RAM VPC sharing to share the required subnets from the central VPC with each member account; application ENIs will attach to the shared subnets while networking resources remain owned and billed to the central account.
+
+**Note:**
+AWS Resource Access Manager (RAM) lets one account share select network-level and licensing resources with other accounts or entire OUs, so teams reuse a single asset without duplicating infrastructure or breaking billing boundaries.
+Classic SAP cues: share VPC subnets to let multiple accounts place ENIs in one hub VPC; share a Transit Gateway so application VPCs in different accounts attach to the same regional network backbone; share Route 53 Resolver rules to push a single DNS-forwarding policy to every account; share License Manager configurations to enforce centralized Windows/RHEL license counts.
+
+### Governance Controls & Guardrails
+
+1. Service Control Policies (SCPs) in AWS Organizations set the maximum permissions any IAM principal can ever receive.
+
+2. Tag policies standardise resource tagging and can now enforce naming/format compliance across all accounts.
+
+3. AWS Control Tower guardrails bundle common SCPs and AWS Config rules into preventive, detective, and proactive controls, applied automatically to the relevant OUs.
+
+4. Delegated administrator capability lets a non-management account own and configure org-wide services such as Security Hub or GuardDuty while remaining inside governance boundaries.
+
+5. Account Factory for Terraform (AFT) provisions new accounts via a GitOps pipeline and on-boards them to Control Tower with baseline guardrails.
+
+**Typical use cases**
+
+- Apply an SCP that denies ec2:StopLogging to stop any member account from disabling GuardDuty or CloudTrail.
+- Enforce a company-wide tag key CostCenter with a tag policy; non-conformant creations are rejected.
+- Delegate Security Hub admin to a central SecOps account so it can auto-enable findings across every new account.
+- Use AFT to create 30 identical sandbox accounts from a Git repository, each landing with mandatory guardrails.
+
+**key points**
+
+- Preventive guardrail = an SCP deployed by Control Tower; detective = AWS Config rule; proactive = CloudFormation hook.
+- SCPs do not grant permissions and do not affect the management account.
+- Tag policies are organisation-wide and can now block non-compliant tags (“enforced_for” flag).
+- Delegated admin avoids giving the management account everyday service ownership—know that many security services support it.
+- AFT is the only Control Tower-native answer when the stem says “GitOps-based, automated account creation.”
+
+**Exam tip**
+
+Q: “Prevent any member account from disabling GuardDuty.”
+A: Attach a preventive guardrail (SCP) that denies guardduty:DeleteDetector to the entire Security OU.
+
+**Note:**
+**Tag Policies** – enforce a company-wide tagging standard for all AWS resources (e.g., every new resource must carry CostCenter=###), so cost allocation, ABAC permissions, and automation rules stay consistent.
+
+**Guardrails** – Control Tower bundles ready-made controls:
+preventive (SCP upper-bounds account permissions), detective (Config rules), and proactive (CloudFormation hooks). They are attached to OUs, giving each OU the right mix of restrictions without hand-building policies for every account.
+
+**Delegated Admin** – the management account grants a designated member account long-term admin rights for an org-wide service (GuardDuty, Security Hub, etc.). Root/management touches the service once; day-to-day operations run from the delegated account under least-privilege.
+
+**Account Factory for Terraform (AFT)** – a GitOps pipeline that creates, configures, and retires AWS accounts automatically. Each new account lands in Control Tower with baseline guardrails, guard-rails, network settings, and any Terraform-defined customizations, making large-scale account provisioning repeatable and auditable.
