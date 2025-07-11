@@ -969,3 +969,61 @@ preventive (SCP upper-bounds account permissions), detective (Config rules), and
 **Delegated Admin** – the management account grants a designated member account long-term admin rights for an org-wide service (GuardDuty, Security Hub, etc.). Root/management touches the service once; day-to-day operations run from the delegated account under least-privilege.
 
 **Account Factory for Terraform (AFT)** – a GitOps pipeline that creates, configures, and retires AWS accounts automatically. Each new account lands in Control Tower with baseline guardrails, guard-rails, network settings, and any Terraform-defined customizations, making large-scale account provisioning repeatable and auditable.
+
+## Task 1.5: Determine cost optimization and visibility strategies
+
+### AWS Cost Monitoring & Alerting Stack
+
+A three-tier framework that groups AWS cost services by depth of oversight:
+
+- **Cost Insight** – day-to-day spend analysis & optimization.
+- **Budget Control** – fixed thresholds that trigger automatic remediation.
+- **Anomaly Detection** – ML-driven alerts for unexpected spikes.
+
+**Typical use cases**
+
+**Cost Insight:** FinOps analyst uses Cost Explorer + Cost Optimization Hub each morning to drill into account/tag costs and action rightsizing recommendations.
+**Budget Control:** Finance sets an AWS Budgets Action that, at 100 AUD spend in a dev account, stops idle EC2 and attaches an SCP blocking new launches.
+**Anomaly Detection:** SRE team enables Cost Anomaly Detection with User Notifications; a 40 % SageMaker surge posts to Slack for real-time triage.
+
+**Key Points**
+
+- Pick the right tool: Forecast before build → AWS Pricing Calculator; daily breakdown → Cost Explorer; unplanned spike → Cost Anomaly Detection.
+- Budget Actions automation: Budgets can attach IAM/SCP policies or stop EC2/RDS—no Lambda required.
+- Anomaly vs. Budget: Budgets use static limits; Anomaly Detection learns historical patterns and supports per-service sensitivity.
+- Optimization Hub role: Aggregates Trusted Advisor, Compute Optimizer, and Savings Plan findings, ranking by potential savings.
+- Trusted Advisor scope: Cost checks highlight idle ELB, under-used EBS, and DynamoDB capacity at account or payer level.
+
+Exam Sample Question
+Q: A solutions architect must ensure any development account that spends over AUD 200 per month is automatically remediated without human intervention. Which option meets this requirement?
+A: Configure an AWS Budgets Action that, at 100 % of a 200 AUD budget, attaches an SCP denying ec2:RunInstances to the development OU.
+
+**Note:**
+Perform resource usage analysis with Cost Explorer and Cost Optimization Hub to surface rightsizing and RI/SP opportunities; configure AWS Budgets Actions (SCP attachment or EC2/RDS stop) to enforce fixed spend limits; enable and tune Cost Anomaly Detection with User Notifications for unforeseen spikes; implement Trusted Advisor and Compute Optimizer recommendations to continuously optimize infrastructure; route all cost alerts to Slack/PagerDuty so the team can respond within operational SLAs.
+
+### Pick the Right Purchase Option
+
+AWS offers three primary commitment-based pricing models for compute: Reserved Instances (RI), Savings Plans (SP), and Spot Instances. Each balances cost versus flexibility differently—RIs give the deepest, fixed discount; SPs trade a smaller discount for broader applicability; Spot offers the steepest savings but with interruption risk.
+
+**Typical use cases**
+
+- **Reserved Instances (Standard or Convertible):** A 24×7 production web tier that will run unchanged for three years chooses Standard RIs to lock in up to 72 % savings.
+- **Compute Savings Plan:** A SaaS platform scaling EC2, Fargate, and Lambda across multiple Regions commits to a Compute SP for cross-service flexibility at up to 66 % off.
+- **SageMaker Savings Plan:** A data-science team running notebooks, training, and real-time inference uses a SageMaker SP to save up to 64 % without altering workloads.
+- **Spot Instances:** A stateless batch-rendering pipeline adopts Spot to cut costs by 70–90 %, architected to checkpoint and restart when interrupted.
+
+**Key Points**
+
+- Maximum savings, fixed workload → Standard RI.
+- Need to change families/OS during term → Convertible RI (lower discount).
+- Region-, family-agnostic flexibility across EC2/Fargate/Lambda → Compute SP.
+- Single-family, single-Region steady state → EC2 Instance SP (greater discount than Compute SP).
+- ML workloads (Studio, Training, Inference) → SageMaker SP.
+- Fault-tolerant, interruptible jobs → Spot (two-minute notice).
+- RIs and SPs both require a 1- or 3-year hourly spend commitment and apply automatically once purchased.
+
+**Exam Sample Question**
+Q: A solutions architect must minimise compute cost for a long-running, steady-state ERP system that will not change instance family or operating system for the next three years. Which purchasing option provides the highest savings?
+A: Purchase 3-year, All-Upfront Standard Reserved Instances for the ERP instances.
+
+**Note:** Standard Reserved Instance — commit 1–3 years to a fixed instance type for up to 72 % savings on steady, never-changing workloads; Convertible Reserved Instance — slightly smaller discount but lets you swap families or OS mid-term, suiting evolving long-running apps; Compute Savings Plan — hourly spend commitment usable by any EC2, Fargate or Lambda in any Region, ideal for flexible multi-service fleets; EC2 Instance Savings Plan — tie the spend to one instance family in one Region for a higher discount than Compute SP when the fleet stays family-bound; SageMaker Savings Plan — cover Studio, Training and Inference with one hourly spend to trim ML costs without resizing; Spot Instance — grab spare capacity at 70–90 % off but design for two-minute interruptions, perfect for stateless batch or fault-tolerant jobs.
