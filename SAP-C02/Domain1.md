@@ -47,7 +47,7 @@ Manages resource lifecycle (create, modify, delete, monitor) but never carries c
 
 **Control-plane actions:**
 
-- aws ec2 run-instances → API allocates capacity and writes to metadata store.
+- `aws ec2 run-instances` → API allocates capacity and writes to metadata store.
 - Editing a VPC route table in the console → configuration is pushed to data-plane routers.
 
 **Not control-plane:**
@@ -210,6 +210,16 @@ Think of address space, tenancy boundaries, and security controls as three inter
 
 - Charged per query; queries run on metric data only—no logs or packets.
 - Minimum resolution one minute; not sub-second.
+
+**Note:**
+
+**Traffic Mirroring with Gateway Load Balancer** copies full packets from Nitro-based EC2 instances and fans them out to third-party IDS/IPS fleets. Use it for deep-packet inspection, forensics, or advanced firewalls needing payload visibility. Exam cues: “packet-level,” “pcap,” or “GWLB fleet,” plus the gotchas that it works only on Nitro instances and can be pricey without mirror filters.
+
+**Reachability Analyzer** is a path-simulation tool that virtually walks the route between two AWS resources to show exactly where traffic is allowed or blocked. Ideal for pre-deployment verification or troubleshooting multi-hop VPC and TGW designs without sending real packets. Look for phrases like “predict,” “what-if,” or “verify path,” and remember it inspects configuration, not live flows.
+
+**Amazon GuardDuty** is a managed threat-detection service that ingests VPC Flow Logs, DNS logs, and CloudTrail, comparing them to AWS threat intel to surface security findings. Choose it for continuous anomaly detection—crypto-mining, account compromise—without deploying sensors. Keywords include “managed service,” “malicious IP,” “detect only,” and you still need WAF, Network Firewall, or automation for blocking.
+
+**CloudWatch Metrics Insights** offers SQL-like ad-hoc queries over CloudWatch metrics for near-real-time dashboards and diagnostics. Perfect for on-call slice-and-dice of NAT, ALB, or TGW stats without building Athena tables. Watch for clues like “real-time metrics,” “SQL GROUP BY,” and note it works on metric data only (one-minute resolution) and charges per query.
 
 ## Task 1.2: Prescribe security controls
 
