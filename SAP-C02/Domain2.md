@@ -66,3 +66,61 @@ Q: A retail company wants to let developers push code to GitHub, run unit tests,
 - B. Configure CodePipeline in the dev account. Add a CodeStar GitHub connection as the source, a CodeBuild test stage, and a CodeDeploy blue/green ECS action that assumes an IAM role in the prod account for deployment and rollback.
 
 A: Correct answer: B — This option chains the four Code\* services, uses OIDC-based CodeStar Connections for secrets-less GitHub access, and leverages CodeDeploy blue/green for automatic rollback while supporting cross-account deployment via assumed roles.
+
+### Change Management & Approvals
+
+AWS Systems Manager Change Manager provides built-in change templates with up to five approval levels, sequential or pooled, and executes only the Automation runbook associated with an approved request. All API calls are logged automatically to AWS CloudTrail, satisfying central-audit requirements. For “self-service but guard-railed” changes, combine Change Manager with AWS CloudFormation Change Sets so engineers can preview exactly what will be deployed while Change Manager enforces policy and approvals.
+
+**Application Scenarios**
+
+- Two-stage approval before production: A production stack update must pass team-lead approval and then ops-manager approval; the Change Manager template specifies two sequential approval levels and triggers the runbook only after both levels sign off.
+- Central audit trail: Security needs every change logged; because Change Manager writes all actions to CloudTrail, no extra logging setup is required.
+- Self-service with guardrails: Developers submit their own CloudFormation Change Sets, preview the diff, and route the change through Change Manager, which checks change windows and requires at least one approver before execution.
+
+**Key Points**
+
+- Multi-level approvals → Change Manager. Up to five approval stages; IAM users, groups, or roles can be approvers.
+- Automatic audit logging → CloudTrail integration. No extra configuration needed; every approval, rejection, and runbook invocation is logged.
+- Runbook enforcement. Only the Automation runbook referenced by the approved change request can run, preventing drift.
+- Guard-railed self-service. Pair Change Manager with CloudFormation Change Sets to let engineers preview and request changes while still requiring policy-based approval.
+
+**Exam Sample Question**
+Q: A company must enforce a two-step approval process before any production stack changes and keep a centralized audit trail of all actions. Which AWS solution meets these requirements with the least additional configuration?
+A: Use AWS Systems Manager Change Manager with a template that defines two approval levels and runs an Automation runbook; CloudTrail captures the complete audit trail automatically.
+
+**Note:**
+
+**Where Change Manager Applies:** It governs infrastructure-level changes—parameter tweaks, ASG policies, RDS sizing, IAM/SCP updates, CloudFormation stack alterations—especially in production or other regulated environments. It enforces up to five approval stages and logs every action to CloudTrail.
+
+**High-Frequency Changes Bypass It:** Routine code-level releases travel through CI/CD pipelines (dozens to hundreds of deployments per day in mature SaaS teams, or several per week in most B2B apps). These rely on automated tests, canary/blue-green rollouts, and fast rollback—no manual approval required.
+
+**When Manual Approval Is Mandatory:** Any update that touches sensitive data, security boundaries, compliance scope, or has major cost impact must be funneled through Change Manager (or an equivalent CAB flow) so human approvers validate the Automation runbook before execution.
+
+“Two-stage approval with central audit” → choose Systems Manager Change Manager; “self-service but guard-railed” → Change Manager + CloudFormation Change Sets.
+
+### AWS Configuration Management
+
+AWS Systems Manager supplies a full configuration-management toolbox: State Manager enforces the desired OS or resource state; Patch Manager automates security-patch SLAs; Parameter Store and Secrets Manager inject versioned parameters and secrets into build or deployment pipelines; Run Command delivers ad-hoc fixes without exposing SSH ports. These sub-services share a unified audit trail in CloudTrail and can target entire Organizations or individual instances.
+
+**Application Scenarios**
+
+- Desired-state enforcement: Ops defines an association in State Manager that ensures prod EC2 instances always run the approved CIS-hardened AMI and correct security-group rules.
+- Patch compliance: Security mandates all Linux nodes must remediate critical CVEs within 48 hours; a Patch Manager schedule applies the latest patches and reports compliance across every account.
+- Pipeline parameter injection: A CodePipeline build pulls database endpoints and API keys at runtime from Parameter Store / Secrets Manager, removing hard-coded values and allowing safe version rollbacks.
+- No-SSH operations: An engineer needs to restart a misbehaving service on dozens of instances; they invoke Run Command with a runbook, fixing the issue without opening port 22.
+
+**Key Points**
+
+- “Patch, CVE SLA” → Patch Manager (central schedules, compliance reports).
+- “Desired state or baseline” → State Manager (associations + automatic drift remediation).
+- \*\*“Inject configs/secrets into pipeline” → Parameter Store (plain or SecureString) or Secrets Manager (rotation support).
+- “No SSH, run one-off command” → Run Command (IAM-controlled, CloudTrail-logged).
+- Parameter vs. Secret choice: Parameter Store suits general configs; Secrets Manager is preferred for credential rotation or encrypted secrets.
+
+**Exam Sample Question**
+Q: A company must ensure that critical security patches are applied to all EC2 instances within 24 hours of release, and operators must never SSH into the servers. Which AWS service combination meets these requirements?
+A: Use AWS Systems Manager Patch Manager to schedule automatic patching and Run Command for any ad-hoc remediation without opening SSH access.
+
+**Note:**
+
+**State Manager** — continuously enforces baseline OS configuration (e.g., guarantees CloudWatch Agent is running and root SSH is disabled on every EC2); **Patch Manager** — schedules and installs critical CVE patches for Amazon Linux, RHEL, Windows within a controlled maintenance window; **Parameter Store** — centrally stores versioned settings such as /prod/api/endpoint, injecting them into Lambda, ECS or CodeBuild at deploy time; **Secrets Manager** — protects and auto-rotates sensitive credentials like RDS master passwords or third-party API tokens under KMS encryption; **Run Command** — executes ad-hoc commands (e.g., systemctl restart nginx) across selected instances without opening SSH, with full IAM control and CloudTrail auditing.
