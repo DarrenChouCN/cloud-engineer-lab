@@ -1027,3 +1027,37 @@ Q: A solutions architect must minimise compute cost for a long-running, steady-s
 A: Purchase 3-year, All-Upfront Standard Reserved Instances for the ERP instances.
 
 **Note:** Standard Reserved Instance — commit 1–3 years to a fixed instance type for up to 72 % savings on steady, never-changing workloads; Convertible Reserved Instance — slightly smaller discount but lets you swap families or OS mid-term, suiting evolving long-running apps; Compute Savings Plan — hourly spend commitment usable by any EC2, Fargate or Lambda in any Region, ideal for flexible multi-service fleets; EC2 Instance Savings Plan — tie the spend to one instance family in one Region for a higher discount than Compute SP when the fleet stays family-bound; SageMaker Savings Plan — cover Studio, Training and Inference with one hourly spend to trim ML costs without resizing; Spot Instance — grab spare capacity at 70–90 % off but design for two-minute interruptions, perfect for stateless batch or fault-tolerant jobs.
+
+### Rightsize & surface waste
+
+#### AWS Compute Optimizer
+
+AWS Compute Optimizer is a service that now analyses mixed-instance Auto Scaling groups and other idle or over-sized resources to generate rightsizing recommendations.
+
+AWS Compute Optimizer must first be enabled (per account, or centrally through AWS Organizations). After collecting up to 14 days of CPU, memory, network-I/O and scaling-policy telemetry, it presents a console report that labels every EC2 instance, EBS volume, Lambda function or Auto Scaling group as over-provisioned, under-provisioned or optimized. For each over-sized item it suggests the exact smaller instance family or configuration and estimates the monthly dollar saving. It never resizes or terminates resources for you—you review the list, choose which changes are safe, and apply them manually or via IaC/Pipeline.
+
+#### Cost Optimization Hub
+
+Cost Optimization Hub aggregates more than 18 kinds of optimisation ideas—including EC2 rightsizing, Graviton migrations, idle EBS, RDS engine swaps, Savings Plan/RI coverage—across every account in an AWS Organisation.
+
+Only the Organisations management (payer) account can enable the Hub for the whole fleet. Once turned on, it continuously pulls findings from Compute Optimizer, Trusted Advisor and billing data, then displays an interactive dashboard where FinOps or platform teams can sort, filter, export CSVs and assign owners. It is strictly read-only analytics: no cost is changed until you approve and execute the suggested actions in the relevant service.
+
+#### Amazon S3 Storage Lens
+
+Amazon S3 Storage Lens provides 28-plus bucket-level metrics and a Cost Optimization tab that highlights objects or buckets suitable for Intelligent-Tiering, Standard-IA or Glacier.
+
+You enable Storage Lens (account- or organisation-wide), choose the destination bucket for its daily report, and let it collect usage statistics. The console then shows heat-maps and sortable tables—e.g. “Objects not accessed for 90 days” or “% of bytes in Standard class”. From there you decide whether to add lifecycle rules, move data, or clean up versions. Storage Lens only reports; all class transitions or deletions remain a deliberate, manual change you script or automate elsewhere.
+
+### Tag & allocate
+
+When you tag every resource—EC2, RDS, S3, Lambda—with a concise, standard key set such as `Owner, Env, BusinessUnit, Project`, you unlock two things.
+
+First, you can activate those keys as cost-allocation tags in the payer (management) account; activation is a one-click step in the Billing console and takes up to 24 hours for AWS to surface the data. Once active, every line in the Cost and Usage Report gains that label, giving finance teams a clean dimension for show-back or charge-back.
+
+With tags activated, you group or filter spend in Cost Explorer—e.g., “Group by Tag: BusinessUnit” to see Marketing vs R&D burn—or create AWS Budgets scoped to a tag, such as a monthly USD 200 cap for `Environment=Dev`. Budgets now support Budget Actions: if a threshold is hit you can automatically apply an IAM or SCP policy, or even stop specific EC2/RDS instances that carry the same tag, forcing developers to investigate before costs spiral.
+
+Because a bad tag schema is as harmful as no tags, organisations publish a tag dictionary (sometimes shipped with the Control Tower landing zone) that spells out allowed keys, value formats, and ownership. Short, predictable keys keep Cost Explorer charts legible and let engineers add tags in Terraform or CloudFormation without guesswork.
+
+**Exam cues:**
+“Split the bill by department / cost centre” → activate cost-allocation tags + use Cost Explorer group-by.
+“Automatically stop dev resources if they blow the budget” → create a tag-scoped AWS Budget with a Budget Action that targets instances whose Environment tag equals Dev.
