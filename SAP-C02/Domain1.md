@@ -191,14 +191,21 @@ Think of address space, tenancy boundaries, and security controls as three inter
 
 ### Amazon GuardDuty
 
-- Purpose: Managed threat-detection service ingesting Flow Logs, DNS and CloudTrail to raise findings using AWS threat intel.
-- Best for: Continuous anomaly detection, crypto-mining alerts, compliance requirements for managed security monitoring.
-- Exam pick-up words: detect, threat intelligence, malicious IP, no appliances, managed service.
+GuardDuty is a fully managed threat-detection engine that ingests CloudTrail, VPC Flow Logs, DNS query logs, S3 data-plane events, and—since June 2025—EKS runtime telemetry plus audit-log correlation. It detects malware, crypto-miners, lateral movement, and multi-stage attacks in containers as well as traditional workloads.
 
-**Common traps**
+**Use Cases**
 
+- Spot a crypto-mining process on a Kubernetes node without installing agents.
+- Alert on suspicious data-exfiltration from S3 buckets or unusual cross-Region API calls.
+
+**SAP Exam Focus**
+
+- Phrases like “detect crypto-miner in EKS cluster” or “runtime threat detection for containers” point straight to GuardDuty.
 - Detects only—does not block. Pair with WAF, Network Firewall, or Lambda automation for enforcement.
 - Billed per analysed log volume and number of findings.
+
+Q: A security team must automatically detect and alert on malware execution inside Amazon EKS containers. Which managed service is the BEST fit?
+A: Amazon GuardDuty.
 
 ### CloudWatch Metrics Insights
 
@@ -217,7 +224,7 @@ Think of address space, tenancy boundaries, and security controls as three inter
 
 **Reachability Analyzer** is a path-simulation tool that virtually walks the route between two AWS resources to show exactly where traffic is allowed or blocked. Ideal for pre-deployment verification or troubleshooting multi-hop VPC and TGW designs without sending real packets. Look for phrases like “predict,” “what-if,” or “verify path,” and remember it inspects configuration, not live flows.
 
-**Amazon GuardDuty** is a managed threat-detection service that ingests VPC Flow Logs, DNS logs, and CloudTrail, comparing them to AWS threat intel to surface security findings. Choose it for continuous anomaly detection—crypto-mining, account compromise—without deploying sensors. Keywords include “managed service,” “malicious IP,” “detect only,” and you still need WAF, Network Firewall, or automation for blocking.
+**Amazon GuardDuty** is a managed threat-detection service that ingests VPC Flow Logs, DNS logs, and CloudTrail, comparing them to AWS threat intel to surface security findings. Choose it for continuous anomaly detection—crypto-mining, account compromise—without deploying sensors. Keywords include “managed service,” “malicious IP,” “detect only,” and you still need WAF, Network Firewall, or automation for blocking. GuardDuty needs almost no setup—just turn it on, optionally enable the EKS protection module, and the service continuously analyses logs and runtime events so DevOps teams can concentrate on response rather than sensor management.
 
 **CloudWatch Metrics Insights** offers SQL-like ad-hoc queries over CloudWatch metrics for near-real-time dashboards and diagnostics. Perfect for on-call slice-and-dice of NAT, ALB, or TGW stats without building Athena tables. Watch for clues like “real-time metrics,” “SQL GROUP BY,” and note it works on metric data only (one-minute resolution) and charges per query.
 
@@ -598,9 +605,13 @@ A static-analysis engine that discovers unintended external access and, since 20
 
 ### AWS Security Hub (with CSPM)
 
-A central console that aggregates security findings, maps them to the AWS Security Finding Format (ASFF), and scores your environment against CIS, PCI-DSS and new CSPM controls.
+A central console that aggregates security findings, maps them to the AWS Security Finding Format (ASFF), and scores your environment against CIS, PCI-DSS and new CSPM controls. Security Hub centralises and de-duplicates findings from GuardDuty, Inspector, Macie, Config, Patch Manager, and dozens of partner tools. The June 2025 preview adds a unified risk-prioritisation dashboard that groups related findings and surfaces the highest-impact issues first.
 
-**Typical use cases:** Single pane of glass for GuardDuty, Macie, Inspector, Access Analyzer, plus enterprise posture dashboards.
+**Use Cases:**
+
+- Single pane of glass for GuardDuty, Macie, Inspector, Access Analyzer, plus enterprise posture dashboards.
+- Org-wide leaderboard of critical CVEs and misconfigurations across 300 accounts.
+- Automated ticket creation or Lambda remediation when a “High” severity control fails.
 
 **Key points:**
 
@@ -608,11 +619,18 @@ A central console that aggregates security findings, maps them to the AWS Securi
 - Supports custom controls; scores can be pushed to ticketing or SOAR tools via EventBridge.
 - Organisations auto-enrol new accounts, ensuring instant coverage.
 
-**Exam tip:** “Need a unified risk score across 50 accounts and multiple AWS security services?” — Enable Security Hub with CSPM in the management account.
+**Exam tip:**
+
+- “Need a unified risk score across 50 accounts and multiple AWS security services?” — Enable Security Hub with CSPM in the management account.
+- Cues such as “prioritise high-risk findings across all accounts” or “single security pane of glass” indicate Security Hub.
+
+Q: Management needs a console view that aggregates GuardDuty, Inspector, and Macie findings and highlights the most severe risks company-wide. Which AWS service meets this goal?
+A: AWS Security Hub.
 
 **Note:**
 Security Hub provides a unified security posture dashboard by aggregating findings across services like GuardDuty and Inspector, converting them into ASFF format, and mapping them against compliance standards such as CIS and PCI-DSS. It supports cross-account, cross-service visibility, automated remediation via EventBridge, and organization-wide onboarding for continuous monitoring.
 In the Security Hub ecosystem: all security findings are standardized into ASFF format, then correlated, visualized, and evaluated through CSPM rulesets. Together, they enable centralized, automated, and policy-aware security posture management.
+Once enabled, Security Hub auto-ingests findings through the AWS Security Finding Format, so DevOps mainly tunes filters and choses remediation playbooks rather than building a data lake from scratch.
 
 ### Amazon Inspector
 
