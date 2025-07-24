@@ -346,13 +346,25 @@ AWS Endpoints are private entry points that let resources inside a VPC reach AWS
 - Write logs from EC2 instances to S3 while blocking all Internet egress → create a Gateway Endpoint and add the route.
 - Call a third-party SaaS API privately from a Sydney VPC to us-east-1 → create a cross-Region Interface Endpoint.
 
+| Scenario                                           | Steps & Components                                                                                                                                                  |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Private S3/DynamoDB access**                     | ① Create Gateway Endpoint → ② Update subnet route table to target `vpce-xxxx` → ③ (Optional) add S3 bucket policy that _denies_ `aws:SourceVpce` ≠ your endpoint    |
+| **Private access to regional AWS or SaaS service** | ① Create Interface Endpoint → ② Security group allows outbound 443 and inbound responses → ③ DNS hostname of service now resolves to the ENI’s 10.x address         |
+| **Cross‑Region PrivateLink**                       | ① Consumer VPC creates Interface Endpoint (cross‑Region flag) → ② AWS transparently routes over the backbone to the service’s Region; origin never sees a public IP |
+
 **Exam Focus**
 Identify cues such as “private access to S3/DynamoDB” (Gateway Endpoint) and “private API call to a Regional service or SaaS provider, cross-Region” (Interface Endpoint / PrivateLink).
 
 Q: A compliance rule states: “No Internet gateway or NAT may be attached, yet the app must write audit files to Amazon S3.” Which design meets the requirement with minimal changes?
 A: B. Create an S3 Gateway Endpoint and update the route table
 
-**Note:** Endpoints exist to keep traffic inside the VPC; a Gateway Endpoint is a routing shortcut for S3/DynamoDB, whereas an Interface Endpoint (PrivateLink) drops an ENI in the subnet and—after Nov 2024—can even bridge Regions, so you choose the type strictly by the target service and privacy scope.
+Q: A compliance rule states: “EC2 instances in a private subnet must write logs to S3 without using public IPs, NAT, or Internet Gateways.” What is the simplest solution?
+A: Create an S3 Gateway Endpoint and add the endpoint ID to the bucket policy.
+
+**Note:**
+Endpoints exist to keep traffic inside the VPC; a Gateway Endpoint is a routing shortcut for S3/DynamoDB, whereas an Interface Endpoint (PrivateLink) drops an ENI in the subnet and—after Nov 2024—can even bridge Regions, so you choose the type strictly by the target service and privacy scope.
+
+Just remember the decision table: S3 / DynamoDB → Gateway; everything else → Interface Endpoint / PrivateLink; different Region → Interface Endpoint + cross‑Region flag. Gateway endpoints are free and use routing; interface endpoints cost per‑hour and behave like miniature NLBs inside your subnet, but both keep packets on the AWS backbone—meeting “no public Internet” requirements with almost zero network re‑architecture.
 
 ### S3 Encryption – SSE-KMS vs. SSE-S3
 
@@ -593,3 +605,227 @@ A: CloudWatch Logs + EventBridge for real‑time triggers, Security Lake for c
 | Stateless, scalable authentication | Cognito / Identity Center + JWT validation |
 | Secret sprawl & manual rotation    | KMS + Secrets Manager                      |
 | Siloed logs & slow response        | CloudWatch/EventBridge + Security Lake/Hub |
+
+## Task 2.4 - Design a strategy to meet reliability requirements
+
+### 1. Highly Available Application Design
+
+Building redundancy into every layer—compute, data, and networking—so the system keeps serving users even when an entire Availability Zone or Region experiences issues; ideal for customer‑facing workloads that demand near‑constant uptime such as e‑commerce sites, SaaS platforms, or critical internal tools, eliminating single points of failure and minimizing downtime.
+
+#### Terminology / Technologies
+
+- **Multi-AZ Deployments:** deploying services across multiple Availability Zones to achieve fault isolation and high availability;
+- **Active-Active vs Active-Passive Topologies:** Active-Active means multiple nodes handle traffic simultaneously; Active-Passive means a primary node handles traffic while a standby node takes over upon failure;
+- **Aurora Global Database:** Amazon Aurora feature that replicates data across regions with one primary region and multiple read-only secondary regions, enabling near real-time synchronization and disaster recovery;
+- **S3 Cross-Region Replication:** automatically replicates S3 objects from one region’s bucket to another for cross-region redundancy;
+- **ALB/NLB Cross-Zone Load Balancing:** distributes traffic evenly across targets in different Availability Zones to avoid overloading a single zone;
+- **Auto Scaling Target Tracking:** automatically adjusts resource capacity based on predefined metrics (e.g., CPU utilization) to maintain desired performance levels;
+- **RTO/RPO Targets:** RTO (Recovery Time Objective) is the maximum acceptable time to restore service after a failure; RPO (Recovery Point Objective) is the maximum acceptable duration of data loss in a disaster scenario;
+
+#### System Design
+
+**Availability Goal ↔ Resilience Scope**
+
+- 99.99 % availability within a Region: choose Multi‑AZ; deploying across multiple AZs isolates single‑AZ failure and lets AWS handle automatic failover
+- ≥ 99.999 % availability or geographic isolation required: choose Multi‑Region; cross‑Region replication and regional traffic routing keep service alive if an entire Region goes down
+
+**RTO / RPO ↔ Data Replication Mechanism**
+
+- Sub‑minute RTO / RPO: Aurora Global Database; asynchronous replication lag < 1 s with rapid primary failover
+- RTO < 1 h, RPO minutes: Warm Standby; continuous replication and pre‑warmed core resources shorten recovery time
+- RTO hours, RPO hours: Pilot‑Light or backup‑and‑restore; only minimal core components stay running, other services start on demand to save cost
+
+**Budget Constraint ↔ Compute Topology**
+
+- Ample budget and need for horizontal scale: Active‑Active; all Region/AZ nodes receive traffic concurrently, avoiding bottlenecks
+- Moderate budget and need quick switchover: Active‑Passive; primary handles traffic, standby is hot and takes over automatically on failure
+- Limited budget and relaxed recovery time: Cold Standby or data‑only backups; compute resources start manually or automatically after an incident to minimize daily spend
+
+#### Sample Question
+
+Q1: An application needs 99.99 % availability in one Region, RTO ≤ 15 min, RPO ≤ 15 min, and the budget allows a small amount of idle capacity
+A1: Multi‑AZ + Warm Standby
+
+Q2: A global e‑commerce platform must keep RTO ≈ 1 min and RPO ≈ 1 min during a Region‑wide disaster while maintaining read/write capability
+A2: Aurora Global Database + Active‑Active multi‑Region deployment
+
+### 2. Design for Failure
+
+Engineering under the assumption that components will inevitably break by injecting faults, adding graceful retry logic, and isolating blast radius; suited to complex distributed systems where transient errors, network partitions, or cascading failures are common, ensuring the application degrades gracefully and recovers automatically without manual intervention.
+
+#### Terminology / Technologies
+
+- **Chaos Engineering (AWS Fault Injection Simulator):** deliberately injects faults into production‑like environments to confirm system resilience;
+- **Retries with Back‑off and Jitter:** re‑attempts failed requests using exponential delays plus random jitter to prevent synchronized retries;
+- **Idempotent Operations:** operations that can be repeated safely because multiple executions yield the same end state;
+- **Circuit Breakers:** monitors call failures and opens to reject further calls until the downstream service recovers;
+- **Bulkheads:** partitions resources so failure in one compartment does not cascade to others;
+- **RDS/Aurora Automatic Failover:** promotes a standby database instance when the primary becomes unavailable, reducing recovery time;
+- **ElastiCache Global Datastore:** replicates Redis data across Regions and can promote a secondary cluster during Regional failures;
+
+#### System Design
+
+**Failure Anticipation ↔ Chaos Testing**
+
+Inject CPU, network, or AZ outages with AWS Fault Injection Simulator; validate alarms and recovery playbooks to surface hidden dependencies
+
+**Transient Fault Handling ↔ Retry and Timeout Policy**
+
+Use exponential back‑off with full jitter in retries; keep calls idempotent to prevent state corruption when duplicates occur
+
+**Persistent Fault Handling ↔ Isolation and Failover**
+
+Apply circuit breakers and bulkheads to localize impact; enable automatic database or cache failover so traffic routes to healthy replicas without manual action
+
+#### Sample Question
+
+Q1: A microservice occasionally receives 500 errors from an external payment API; the business must avoid duplicate charges and keep latency low
+A1: Idempotent operations with exponential back‑off and jitter
+
+Q2: A global retail site must verify that its multi‑tier architecture withstands an Availability‑Zone network black‑hole without manual intervention
+A2: Chaos engineering using AWS Fault Injection Simulator plus Multi‑AZ automatic database failover and circuit breakers
+
+### 3. Loosely Coupled Dependencies
+
+Decoupling microservices and event producers through asynchronous messaging and event buses so each part can scale, deploy, or fail independently; perfect for microservice architectures, data pipelines, and bursty workloads, solving tight coupling problems that otherwise cause back‑pressure, lock‑step scaling, or cross‑service outages.
+
+#### Terminology / Technologies
+
+- **SNS fan‑out to SQS:** publishing a single message to an SNS topic that delivers copies to multiple SQS queues, enabling parallel processing;
+- **FIFO vs Standard Queues:** FIFO queues preserve strict order and guarantee exactly‑once processing; Standard queues offer at‑least‑once delivery with best‑effort ordering but higher throughput;
+- **Dead‑Letter Queues (DLQ):** secondary queues that store messages that could not be processed after the maximum retry count, isolating poison messages for later analysis;
+- **AWS Step Functions Orchestration:** serverless workflow service that coordinates distributed components with retries, parallel branches, and timeout handling;
+- **EventBridge Buses:** event router that receives, filters, and delivers events to multiple targets across AWS accounts and services without tight coupling;
+- **Lambda Pollers:** AWS‑managed pollers that automatically retrieve messages from SQS and invoke Lambda functions, scaling concurrency with queue depth;
+
+#### System Design
+
+**Ordering / Exactly‑Once ↔ Queue Type**
+
+Use FIFO SQS with content‑based deduplication for strict order and exactly‑once delivery; employ message groups if parallelism with ordered subsets is needed
+
+**Error Isolation ↔ Dead‑Letter Handling**
+
+Attach DLQs to SQS, Lambda, or Step Functions to divert poison messages after retry limits; monitor DLQ size with CloudWatch alarms to trigger remediation workflows
+
+**Independent Scaling ↔ Event‑Driven Fan‑out**
+
+Combine SNS fan‑out or EventBridge buses with multiple SQS queues so each microservice scales independently; Lambda pollers auto‑scale with incoming messages, and Step Functions orchestrate long‑running or multi‑step transactions without blocking upstream producers
+
+#### Sample Question
+
+Q1: A workload must process orders in the exact sequence received and ensure each order is handled only once
+A1: Use an SQS FIFO queue with content‑based deduplication
+
+Q2: A payment microservice occasionally receives malformed events that break JSON parsing and block the queue; the team must isolate these bad messages without affecting healthy traffic
+A2: Configure an SQS dead‑letter queue and route messages there after the maximum retry attempts
+
+### 4. Operate & Maintain Highly Available Systems
+
+Ensuring a live system stays healthy after go‑live by automating failover checks, managing seamless rollouts, and scheduling maintenance so updates never violate uptime targets; critical for production workloads that must evolve continuously—patches, schema changes, traffic shifts—without introducing new single points of failure or extended outages.
+
+#### Terminology / Technologies
+
+- **Multi‑AZ Failover Health Checks:** continuous probes that detect primary‑instance failure and trigger automatic promotion within the same Region;
+- **Cross‑Region Replica Promotion Times:** measured duration to elevate a read replica in another Region to primary, used to validate RTO targets;
+- **Aurora Failover Tiers:** priority levels that define which replica becomes the new writer during an Aurora cluster failover;
+- **Auto Scaling Instance Refresh:** rolling replacement of EC2 instances in an Auto Scaling group with the latest AMI while preserving capacity;
+- **Blue/Green and Canary Deployments:** traffic‑shifting strategies that direct a subset of users to new code to verify stability before full cutover;
+- **Staggered Patch Windows:** offset maintenance windows across instances or AZs so only a fraction of the fleet is updated at any time;
+
+#### System Design
+
+**Fault Detection ↔ Health Check Hierarchy**
+
+Use layered health checks—ELB target health, Auto Scaling EC2 status, database replication lag—to trigger Multi‑AZ or Aurora failovers quickly and avoid sending traffic to unhealthy nodes
+
+**Zero‑Downtime Updates ↔ Progressive Deployment**
+
+Combine blue/green or canary strategies with Auto Scaling instance refresh to roll out AMI or configuration changes without dropping connections; monitor key metrics and roll back if error rates rise
+
+**Maintenance Continuity ↔ Staggered Windows & Replica Promotion**
+
+Schedule staggered patch windows across AZs and Regions so at least one healthy replica or instance group is always online; validate cross‑Region promotion time to ensure it meets business RTO during planned or unplanned events
+
+#### Sample Question
+
+Q1: A production Aurora cluster must promote a standby writer in under 30 seconds when the primary fails; which configuration ensures this target is met?
+A1: Assign the highest failover tier (tier 0) to the preferred replica and enable Aurora automated monitoring health checks
+
+Q2: A company needs to roll out a security patch to hundreds of EC2 instances without affecting live traffic; which approach satisfies this requirement?
+A2: Use Auto Scaling instance refresh with a blue/green deployment strategy and verify health checks before shifting 100 % traffic to the new instances
+
+Q3: During maintenance, one Availability Zone must stay fully operational while the other is patched; how should the patch schedule be arranged?
+A3: Apply staggered patch windows so each AZ is updated at a different time, ensuring continuous capacity across the Region
+
+### 5. Managed Highly Available Services
+
+Leveraging fully managed AWS offerings that embed high availability, replication, and fail‑in routing so you don’t have to build or operate clusters yourself; ideal when the goal is to meet strict replication‑lag or uptime targets with the lowest operational burden—letting AWS handle scaling, patching, and cross‑Region traffic steering while you focus on business logic.
+
+#### Terminology / Technologies
+
+**DynamoDB Global Tables:** multi‑Region, multi‑active NoSQL replication with single‑digit‑millisecond latency and ≤ 1 s cross‑Region lag;
+**S3 Standard:** durable (11 nines) object storage automatically replicated across three AZs in one Region;
+**EFS Standard:** regional NFS file system that stores data redundantly across multiple AZs and scales to petabytes without manual provisioning;
+**Kinesis Enhanced Fan‑out:** dedicated throughput pipes (up to 2 MB/s per consumer) that eliminate consumer‑level throttling on data streams;
+**Global Accelerator:** AnyCast edge network that directs users to the closest healthy AWS endpoint and instantaneously shifts traffic on failure;
+**Elastic Load Balancing (ALB/NLB):** managed layer 7/4 load balancers with cross‑Zone failover and health checks—no self‑managed HA proxy layer required;
+
+#### System Design
+
+**Operational Simplicity ↔ Managed Option**
+
+Replace self‑built clusters with DynamoDB Global Tables, S3 Standard, or EFS Standard to offload patching, scaling, and replication tasks to AWS
+
+**Replication & Consistency ↔ Built‑in HA Features**
+
+Use services whose default behavior meets RTO/RPO—e.g., DynamoDB global tables for sub‑second multi‑Region writes, ELB cross‑Zone routing for AZ resilience
+
+**Global Performance ↔ Edge Routing & Stream Throughput**
+
+Adopt Global Accelerator for low‑latency routing to the nearest healthy Region and Kinesis enhanced fan‑out to guarantee consistent consumer throughput without tuning shards
+
+#### Sample Question
+
+Q1: A gaming backend needs < 1 second cross‑Region data replication with minimal operational overhead; which service meets this requirement?
+A1: DynamoDB Global Tables
+
+Q2: A video analytics pipeline requires each consumer to read up to 2 MB/s from the same stream without throttling or shard rebalancing; which managed feature should be used?
+A2: Kinesis Enhanced Fan‑out
+
+### 6. DNS Routing Policies
+
+Directing user traffic at the DNS layer with policy‑based decision logic—latency, geography, failover status, or traffic shifting—so clients reach the optimal endpoint without changing application code; ideal for global services that need low latency delivery, jurisdiction‑aware routing, disaster recovery cut‑over, or controlled blue/green rollouts while AWS Route 53 handles resolution and health checks.
+
+#### Terminology / Technologies
+
+- **Route 53 Simple Routing:** returns one record set for a domain, suitable for single‑endpoint workloads;
+- **Weighted Routing:** splits traffic across multiple records using adjustable weights, supporting blue/green or canary releases;
+- **Latency‑Based Routing:** routes each client to the Region with the lowest observed latency to that user’s DNS resolver;
+- **Failover Routing:** designates primary and secondary records, automatically switching to the secondary when Route 53 health checks detect the primary is unhealthy;
+- **Geolocation Routing:** directs users based on the country or continent of their originating IP address, useful for data sovereignty or localized content;
+- **Geoproximity Routing:** uses Route 53 Traffic Flow to shift traffic toward or away from resources based on geographic distance and optional bias, handy for gradual Region migrations;
+- **Health Checks:** automated probes (HTTP, HTTPS, TCP) that mark a record healthy or unhealthy for failover decisions;
+- **Alias A Records:** special Route 53 records that map a DNS name to AWS resources (ELB, CloudFront, S3, etc.) without extra cost or DNS lookups;
+
+#### System Design
+
+**Latency Optimization ↔ Latency‑Based Routing**
+
+Deploy identical endpoints in multiple Regions; Route 53 returns the IP of the Region with the lowest latency to each user, reducing round‑trip time without additional application logic
+
+**Jurisdiction Compliance ↔ Geo‑Aware Policies**
+
+Use Geolocation routing to keep EU traffic within EU data centers for GDPR compliance; apply Geoproximity with bias to gradually shift traffic from an old Region to a new one during migrations
+
+**Disaster Recovery & Traffic Shifting ↔ Failover / Weighted**
+
+Combine Failover routing with health checks to cut over from primary to secondary Region automatically during outages; apply Weighted routing (e.g., 90/10, 50/50) for blue/green deployments, increasing weight on the new version as it proves stable
+
+#### Sample Question
+
+Q1: A worldwide API must ensure each client hits the Region with the shortest network latency while falling back to another Region if its endpoint becomes unhealthy
+A1: Use Latency‑Based routing for primary selection combined with Route 53 health checks and Failover routing for automatic Regional failover
+
+Q2: A company needs to route Canadian users to a data center in Toronto for data residency, while the rest of the world continues to use the US Region
+A2: Configure a Geolocation routing policy with a rule for the CA country code pointing to the Toronto endpoint and a default rule pointing to the US endpoint
