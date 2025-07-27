@@ -145,7 +145,7 @@ Systems Manager centralizes configuration and operations: State Manager for cont
 
 ### 2. Deployment Strategy and Rollback
 
-### CI/CD Pipeline
+#### CI/CD Pipeline
 
 Building, testing, and releasing code on AWS with a managed toolchain that detects commits, packages artifacts, enforces quality gates, deploys across isolated accounts, and rolls back automatically when health checks fail—ideal for teams wanting repeatable releases, zero long‑lived Git secrets, and minimal ops overhead.
 
@@ -251,9 +251,229 @@ A12: Choose the managed **CodePipeline/CodeBuild/CodeDeploy** stack to minimize 
 **Note**
 The default managed chain is CodeCommit → CodeBuild → CodeDeploy → CodePipeline, but real exams stress patterns like OIDC‑based GitHub integration, cross‑account AssumeRole deployments, manual approvals for governance, and CodeDeploy’s blue/green or canary strategies with CloudWatch‑driven rollback; when the prompt emphasizes an integrated SaaS for code and project management, pivot to CodeCatalyst, and always remember artifact storage (S3/ECR), observability, and compliance hooks are integral parts of a production‑grade pipeline.
 
+#### Blue/Green Deployment
+
+Run two parallel environments—**blue** (current) and **green** (new)—and shift production traffic between them. This delivers zero‑downtime releases and near‑instant rollback by flipping ALB target groups or Route 53 records. Data tiers can use RDS Blue/Green clones for sub‑minute cutovers with no data loss.
+
+- **CodeDeploy Blue/Green (EC2, ECS, Lambda):** deployment type that creates a new green environment and shifts traffic via ALB/Route 53; supports pre/post‑traffic hooks;
+- **ALB / Route 53 Weighted Shifting:** traffic routing modes (all‑at‑once, linear, canary 10/90) to control exposure and rollback speed;
+- **CloudWatch Alarms + Automatic Rollback:** alarms on 5xx, latency, or task health trigger CodeDeploy to revert traffic to blue instantly;
+- **RDS Blue/Green:** creates a synchronized green clone of an Aurora/RDS database, swaps endpoints in <1 minute with zero data loss—ideal for schema or engine upgrades;
+- **Target Groups / DNS Flip:** technical mechanisms for switching user traffic between blue and green stacks;
+- **Use Cases:** zero‑downtime version or schema upgrades; regulated workloads that require provable fast rollback; risky OS/library jumps where in‑place upgrades are unsafe;
+
+**Zero‑Downtime + Fast Rollback**
+
+Choose Blue/Green when stems say “must revert in seconds,” “no downtime,” or “prove rollback capability.” ALB/Route 53 weighted routing + CloudWatch alarms provide instant cutback.
+
+**Traffic Shifting Strategy**
+
+All‑at‑once for simple, low‑risk changes; linear or canary weights to observe metrics gradually. Pre/post‑traffic lifecycle hooks validate health before full cutover.
+
+**Data Layer Cutover**
+
+For DB upgrades or schema changes, prefer **RDS Blue/Green** over manual snapshots: it syncs continuously and swaps endpoints rapidly without data loss.
+
+**Automation and Governance**
+
+Integrate CodeDeploy hooks with CloudWatch alarms; store deployment policies in IaC; pair with Change Manager only if manual approvals are mandated.
+
+_(Exam clues: “zero downtime + instant rollback” → Blue/Green; “schema/engine upgrade with minimal downtime” → RDS Blue/Green; “weighted shift/CloudWatch rollback” → CodeDeploy Blue/Green + ALB/Route 53.)_
+
+Q1: Need a zero‑downtime schema change and the ability to revert in seconds if errors exceed 1%. Which pattern and services fit?  
+A1: Blue/Green with CodeDeploy traffic shifting (ALB/Route 53) and CloudWatch alarm‑based automatic rollback.
+
+Q2: A team must upgrade an Aurora database engine version with <1 minute downtime and no data loss. What should they use?  
+A2: RDS Blue/Green to clone, sync, and swap endpoints during cutover.
+
+Q3: A deployment must expose only 10% of traffic to the new version first but still allow instant rollback. Which approach is best?  
+A3: CodeDeploy Blue/Green with a canary (10/90) weight and CloudWatch alarms for automatic rollback.
+
+**Note**
+Blue/Green isolates risk by running the new release in a fully separate stack, shifting traffic only after validation. Rollback is a routing flip—not a rebuild—so recovery is measured in seconds. CodeDeploy supports Blue/Green for EC2, ECS, and Lambda; Route 53/ALB handle weighted shifts; CloudWatch alarms enforce automatic rollback. For databases, RDS Blue/Green provides the same paradigm at temporary cost of a duplicate environment.
+
+#### Canary Deployment
+
+Release a new version to a small slice of users or hosts (commonly 5–10%), watch real‑time metrics, then expand gradually. AWS AppConfig simplifies config/feature‑flag canaries; CodeDeploy and API Gateway support code/API canaries. CloudWatch alarms (or AppConfig monitors) trigger automatic rollback if error or latency thresholds are breached.
+
+- **AWS AppConfig Canary Strategies:** presets like “Canary10Percent30Minutes” with built‑in monitors and rollback for configs/feature flags;
+- **CodeDeploy Canary (Lambda / ECS):** traffic routing modes such as “Canary10Percent5Minutes”; pre/post hooks plus CloudWatch alarms enable auto‑revert;
+- **API Gateway Stage Canary:** route 1–99% of API traffic to a new stage for gradual exposure;
+- **CloudWatch Alarms / AppConfig Monitors:** key metrics (5xx, latency, custom KPIs) drive halt and rollback;
+- **Use Cases:** limit blast radius for risky logic, ML model swaps, mobile A/B tests, SLA‑sensitive apps where 100% failure is unacceptable yet running a full parallel stack (blue/green) is overkill;
+
+**Blast Radius Control and Metric Gates**  
+Start with a small percentage (e.g., 5–10%) and only increase when metrics stay healthy. Tie CloudWatch alarms or AppConfig monitors to auto‑stop and rollback on breach.
+
+**Config vs Code Canary**  
+For configuration/feature toggles, prefer **AppConfig** (no code redeploy needed); for Lambda/ECS/API code, use **CodeDeploy Canary** or **API Gateway stage canary**.
+
+**Traffic Shifting Mechanics**  
+Define increments and intervals (e.g., 10% for 30 minutes, then +10% every 5 minutes). Keep the old path live until final cutover so rollback is just resetting weights.
+
+**Cost and Complexity Considerations**  
+Canary avoids the duplicate environment cost of blue/green but still provides fast rollback (routing change) and real‑user validation—ideal when downtime is unacceptable but infra duplication isn’t justified.
+
+_(Exam clue mapping: “only 10% of users first,” “auto‑revert on 5xx spike,” “minimal code change for configs” → AppConfig canary + CloudWatch alarm; “Lambda/ECS canary 10/90” → CodeDeploy canary; “gradual API traffic shift” → API Gateway canary.)_
+
+Q1: Must expose a new feature to only 10% of users and automatically revert on a 5xx spike, with minimal code change. What should you choose?  
+A1: AWS AppConfig canary deployment with CloudWatch (or AppConfig) alarms for automatic rollback.
+
+Q2: A Lambda service needs a staged rollout: 10% traffic for 5 minutes, then full if healthy, with automatic rollback on errors. Which approach fits best?  
+A2: CodeDeploy canary deployment for Lambda with CloudWatch alarms.
+
+Q3: An API must route 1–5% of traffic to a new version while monitoring latency, then scale to 100% if stable. Which AWS feature enables this?  
+A3: API Gateway stage canary with gradually increased traffic percentage and CloudWatch alarms.
+
+**Note**  
+A canary deployment validates real production behavior on a controlled fraction of users before full release. It relies on incremental traffic shifting, health metrics, and automatic rollback triggers. AppConfig is optimal for configuration and feature flags; CodeDeploy and API Gateway handle code/API canaries. Compared with blue/green, canary trades instant environment flip for lower cost and incremental exposure. Always bind alarms to halt and reverse the rollout the moment KPIs degrade.
+
+### Rolling Update
+
+Replace a fleet in controlled batches—terminate a slice, launch the new version, verify health, repeat—until 100% is updated. No duplicate environment is required, but rollback means running another rolling cycle, so recovery is slower than blue/green.
+
+- **EC2 Auto Scaling Instance Refresh:** rolling replacement driven by a new launch template; key params: `MinHealthyPercentage`, `InstanceWarmup`, `SkipMatching` (avoid recycling already‑compliant instances).
+- **CodeDeploy In‑place (EC2/On‑Prem):** updates instances batch by batch, with automatic rollback if a batch fails health checks.
+- **ECS / Elastic Beanstalk Rolling Updates:** service schedulers replace tasks/instances in batches according to configured batch size and health checks.
+- **Health Checks / CloudWatch Alarms:** gate each batch; failures halt the refresh and trigger rollback.
+- **Use Cases:** large stateless fleets that can tolerate brief capacity dips; cost‑conscious teams avoiding double infra; frequent small releases (patches, minor features).
+
+**Cost Neutrality vs Capacity Dip**
+
+- Choose rolling when stems say “cost must stay flat” or “can lose up to X% capacity.” Tune `MinHealthyPercentage` to guarantee remaining capacity.
+
+**Rollback Mechanics**
+
+- Rollback = run the cycle in reverse or restore the previous launch template; slower than blue/green, so avoid rolling when “instant rollback” is required.
+
+**Stateful / High-Availability Considerations**
+
+- For stateful workloads, ensure Multi‑AZ or redundant nodes so each batch replacement doesn’t violate availability SLAs.
+
+**Exam Clue Mapping**
+
+- “Service can lose 20% capacity” → Instance Refresh with `MinHealthyPercentage=80`.
+- “Avoid replacing already updated instances” → `SkipMatching=true`.
+- “Batch fails, auto rollback” → CodeDeploy in‑place with CloudWatch alarms.
+- “Cheapest option, no duplicate environment” → rolling update.
+
+Q1: A service can lose up to 20% capacity during upgrades and cost must not increase. Which deployment pattern fits?  
+A1: Rolling update using EC2 Auto Scaling Instance Refresh with `MinHealthyPercentage` set to 80%.
+
+Q2: During an EC2 in‑place deployment, a batch fails health checks and must automatically revert. Which AWS service and pattern handle this?  
+A2: CodeDeploy in‑place deployment with CloudWatch alarms for automatic rollback.
+
+Q3: An Auto Scaling group already runs the new AMI on half its instances; you want to refresh only the outdated ones. What setting should you use?  
+A3: Enable `SkipMatching` in Instance Refresh to avoid replacing compliant instances.
+
+**Note**
+Rolling updates reuse the existing fleet, so they’re cost‑efficient but tolerate only limited capacity loss. Each batch is replaced, health‑checked, then the next batch proceeds—rollback requires another pass. Instance Refresh (EC2), CodeDeploy in‑place, and ECS/Beanstalk rolling modes all implement this pattern. Favor rolling when brief capacity dips are acceptable and budgets preclude duplicate stacks; choose blue/green when you need instant rollback or zero downtime, and canary when you need metric‑gated gradual exposure without duplicating the entire environment.
+
 ### 3. Managed Service Adoption
 
+#### Offload with Managed Services
+
+Adopt fully managed AWS services to eliminate cluster provisioning, patching, and undifferentiated ops. This reduces overhead and makes advanced capabilities (connection pooling, standardized templates, per‑request scaling) accessible without building them yourself—ideal when stems stress “no infrastructure,” “self‑service,” or “reduce operational burden.”
+
+- **AWS App Runner:** PaaS for containers—builds, deploys, patches, and scales from a repo or image; no ELB/Auto Scaling setup required.
+- **AWS Proton:** Platform team defines golden IaC + CI/CD templates; application teams self‑service new microservices within those guardrails.
+- **AWS Fargate (for ECS/EKS):** Serverless containers—no EC2 provisioning or patching; scales tasks on demand.
+- **AWS Lambda:** Functions, not servers—AWS manages runtime, fleet, and scaling; pay per request/concurrency.
+- **RDS Proxy:** Managed DB connection pool with failover, TLS, and secret rotation—prevents Lambda/ECS from exhausting DB connections.
+
+_(Typical exam stems → correct picks)_
+
+- “Deploy a containerized web API in minutes, no cluster expertise” → **App Runner**
+- “Platform must enforce standards; dev teams need self‑service” → **Proton**
+- “Run bursty containers, avoid patching EC2” → **Fargate**
+- “Scale Python ETL job to zero, pay per request” → **Lambda**
+- “Thousands of short‑lived Lambdas overwhelm DB connections” → **RDS Proxy**
+
+**Reduce Provisioning & Patching Overhead**
+
+Choose **Fargate** or **Lambda** to remove EC2 lifecycle management; pick **App Runner** for end‑to‑end container app deployment without ALB/ASG work.
+
+**Standardize and Democratize Advanced Tech**
+
+Use **Proton** when a central platform team must enforce IaC/CI/CD standards while enabling team self‑service; developers launch services without touching underlying infra.
+
+**Database Connection Management & Resilience**
+
+Insert **RDS Proxy** between spiky, short‑lived compute (Lambda/ECS) and the database to pool connections, handle failover, rotate secrets, and cut client retries.
+
+**Exam Clue Mapping (embedded above)**
+
+- “No infra/patching” → App Runner/Fargate/Lambda
+- “Self‑service microservice factory / golden templates” → Proton
+- “DB connections exhausted by Lambda/ECS” → RDS Proxy
+
+Q1: Deploy a new containerized web API in minutes with zero cluster or load balancer setup. Which AWS service fits?  
+A1: **AWS App Runner**
+
+Q2: A platform team must enforce standardized IaC/CI/CD stacks, while dev squads self‑provision services safely. What should you use?  
+A2: **AWS Proton**
+
+Q3: Thousands of short‑lived Lambda invocations are exhausting database connections. How do you reduce admin overhead and stabilize connections?  
+A3: **RDS Proxy**
+
+#### Note
+
+“Offload with managed services” is about shifting undifferentiated heavy lifting—cluster ops, patching, connection pooling, template governance—to AWS. Pick App Runner for turnkey container apps, Proton for standardized self‑service platforms, Fargate/Lambda for serverless compute, and RDS Proxy for managed DB pooling. When stems emphasize minimal ops effort, per‑request scaling, or controlled self‑service, default to these managed options over DIY clusters or custom pooling logic.
+
 ### 4. Delegating Complex Tasks to AWS
+
+Make advanced technologies (build systems, microservice platforms, workflow orchestration, connection pooling, feature rollout, ML pipelines) accessible by offloading their heavy lifting to managed AWS services. Instead of hand‑crafting clusters, pipelines, or orchestration code, you let AWS provide opinionated, automated solutions—reducing cognitive load, speeding delivery, and shrinking the blast radius of human error.
+
+- **AWS Proton:** “Platform as a Product” for internal teams—platform engineers publish golden IaC + CI/CD templates so app teams self‑service new microservices safely.
+- **AWS App Runner / Elastic Beanstalk / Amplify:** one‑click (or few‑click) deployment of container/web/mobile apps—build, deploy, scale, and patch without managing ALB/ASG/ECS/EKS.
+- **AWS Fargate / Lambda:** serverless compute that removes instance provisioning, patching, and capacity planning; pay per request or task.
+- **RDS Proxy:** managed DB connection pooling, failover handling, TLS, and secret rotation—no custom pooling layer needed for bursty Lambda/ECS traffic.
+- **AWS Step Functions / EventBridge Pipes / Scheduler:** visual workflow and event routing that replaces custom orchestration code and cron glue scripts.
+- **AWS AppConfig:** managed feature flags and config rollouts (canary/linear) with automatic rollback—no custom toggle system needed.
+- **Amazon CodeCatalyst / CodeGuru / CodeArtifact:** SaaS-style dev platform, automated code quality/security review, and managed artifact repos—all reducing build/code toolchain ops.
+- **SageMaker (Pipelines/Studio):** end‑to‑end ML platform (training, tuning, deployment) so teams skip building bespoke ML infra/tooling.
+
+**Choose Managed Platforms over DIY Stacks**
+
+- Stem says “no infrastructure expertise,” “publish quickly,” or “standardize microservice scaffolding” → **App Runner**, **Amplify**, or **Proton** (platform team defines, devs consume).
+
+**Eliminate Server Management for Compute**
+
+- “Remove EC2 patching/provisioning” or “scale to zero/pay per request” → **Lambda**; “container workloads without EC2 management” → **Fargate**.
+
+**Offload Cross‑Cutting Concerns**
+
+- “DB connections exhausted / pooling complexity” → **RDS Proxy**;
+- “Config/feature rollout with auto‑rollback” → **AppConfig**;
+- “Complex job orchestration / retries / parallel branches” → **Step Functions** instead of custom state machines.
+
+**Centralize and Automate Dev Tooling**
+
+- “Single SaaS portal for repo, issues, pipelines” → **CodeCatalyst**;
+- “Automated code security/quality review” → **CodeGuru**;
+- “Managed artifact/package store” → **CodeArtifact**.
+
+- “Self‑service microservice factory; platform enforces standards” → **Proton**.
+- “Deploy containerized web API in minutes, no cluster” → **App Runner**.
+- “Thousands of short‑lived Lambdas overwhelm DB” → **RDS Proxy**.
+- “Need feature flag canary with rollback, minimal code change” → **AppConfig**.
+- “Build workflows without writing orchestration code” → **Step Functions**.
+- “Move between EC2/Fargate/Lambda but keep commit savings” → (Pricing angle) **Compute SP**, but for delegation context pick the managed option enabling portability.
+
+Q1: A central platform team wants to enforce standardized IaC and CI/CD stacks while allowing dev squads to self‑provision new services. Which AWS service best fits?  
+A1: **AWS Proton**
+
+Q2: Developers need to release new configuration values gradually (10% → 100%) with automatic rollback on error spikes, without redeploying code. What should they use?  
+A2: **AWS AppConfig** with built‑in canary strategies and CloudWatch alarms.
+
+Q3: Thousands of short‑lived Lambda invocations are exhausting database connections. The team wants to avoid writing custom pooling logic. What should they implement?  
+A3: **Amazon RDS Proxy**
+
+Q4: A data engineering team needs to orchestrate a multi‑step ETL with retries, parallel branches, and human approval steps—without building a custom scheduler. Which service is appropriate?  
+A4: **AWS Step Functions**
+
+**Note**  
+This skill focuses on _delegation_: when stems emphasize “no servers to manage,” “self‑service but governed,” “built‑in rollback/monitoring,” or “replace custom orchestration/pooling,” choose the AWS service that abstracts that complexity. Proton, App Runner, Amplify, Fargate, Lambda, RDS Proxy, AppConfig, and Step Functions are archetypal answers. They shift advanced operational or architectural burdens to AWS, letting teams focus on business logic while still meeting compliance and reliability requirements.
 
 ## Task 2.4 - Design a strategy to meet reliability requirements
 
@@ -747,13 +967,13 @@ A4: Choose Compute Savings Plans and supplement with Spot for burst capacity; av
 
 Analyzing where bytes move—across AZs, Regions, or the public internet—and redesigning paths to cheaper, private, or cached routes; ideal for workloads surprised by high egress bills, frequent cross‑Region replication, or NAT gateway charges, where simple architectural shifts (endpoints, caching, peering) can drastically cut cost without hurting performance.
 
-- **Inter‑AZ / Inter‑Region Transfer Pricing:** data sent between AZs or Regions is billed; same‑AZ traffic is usually free or cheaper, while cross‑Region replication is often the most expensive path;
-- **PrivateLink / VPC Endpoints (Interface & Gateway):** private connections to AWS services or third‑party SaaS over the AWS network; interface endpoints (ENI‑based) vs gateway endpoints (S3/DynamoDB only, free data path within Region);
-- **CloudFront for Egress Offload:** CDN caching that serves content from edge locations, reducing origin egress and lowering internet data transfer costs;
-- **S3 Transfer Acceleration vs Standard PUT/GET:** accelerated uploads/downloads via edge locations for long‑distance transfers; standard operations are cheaper if latency is acceptable;
-- **Direct Connect vs Internet Egress:** dedicated private link to AWS with predictable bandwidth pricing vs variable internet egress charges;
-- **NAT Gateway vs NAT Instance Costs:** managed NAT gateways charge per GB processed and per hour; NAT instances can be cheaper at scale but require management;
-- **Data Transfer Monitoring & Tagging:** using Cost Explorer, CUR, and tagging to attribute transfer costs and identify hotspots;
+- **Inter‑AZ / Inter‑Region Transfer Pricing:** Transferring data between Availability Zones or Regions incurs charges; traffic within the same AZ is usually free or much cheaper, while cross‑Region replication is often the most expensive path. Design guidance: Co-locate producers and consumers in the same AZ or Region when possible; avoid unnecessary cross‑Region replication unless required.
+- **PrivateLink / VPC Endpoints (Interface & Gateway):** Private connectivity to AWS services or third‑party SaaS via the AWS backbone; interface endpoints (ENI‑based) support most services, while gateway endpoints apply only to S3 and DynamoDB and allow free, in‑Region traffic. Design guidance: Use gateway endpoints for S3 or DynamoDB to avoid NAT and egress charges; use PrivateLink or VPC peering instead of public endpoints to keep traffic on AWS’s internal network.
+- **CloudFront for Egress Offload:** Use CDN caching to serve content from edge locations, reduce origin egress traffic, and lower internet transfer costs. Design guidance: Deploy CloudFront in front of S3 or ALB to cache and serve static assets; use S3 Transfer Acceleration only for globally distributed clients with strict latency requirements.
+- **S3 Transfer Acceleration vs Standard PUT/GET:** Accelerated transfers use edge locations for better performance over long distances; standard operations are cheaper if latency is acceptable.
+- **Direct Connect vs Internet Egress:** Dedicated private connection to AWS with predictable bandwidth pricing vs variable-cost internet egress. Design guidance: Use Direct Connect for steady, high-volume data transfer; use VPN or internet for low-volume or occasional workloads.
+- **NAT Gateway vs NAT Instance Costs:** Managed NAT gateways charge per GB and per hour; NAT instances can be cheaper at scale but require management. Design guidance: For heavy outbound traffic, consider NAT instances with auto scaling and scripts; consolidate NAT gateways per AZ to save hourly costs while maintaining availability.
+- **Data Transfer Monitoring & Tagging:** Use Cost Explorer, CUR, and tagging to assign costs and identify transfer hotspots. Design guidance: Tag relevant resources and monitor transfer costs to detect spikes, investigate patterns, and optimize architecture accordingly.
 
 **Cost Drivers ↔ Traffic Path Selection**
 
