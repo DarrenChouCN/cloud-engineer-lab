@@ -328,7 +328,7 @@ A3: API Gateway stage canary with gradually increased traffic percentage and Clo
 **Note**  
 A canary deployment validates real production behavior on a controlled fraction of users before full release. It relies on incremental traffic shifting, health metrics, and automatic rollback triggers. AppConfig is optimal for configuration and feature flags; CodeDeploy and API Gateway handle code/API canaries. Compared with blue/green, canary trades instant environment flip for lower cost and incremental exposure. Always bind alarms to halt and reverse the rollout the moment KPIs degrade.
 
-### Rolling Update
+#### Rolling Update
 
 Replace a fleet in controlled batches—terminate a slice, launch the new version, verify health, repeat—until 100% is updated. No duplicate environment is required, but rollback means running another rolling cycle, so recovery is slower than blue/green.
 
@@ -474,6 +474,272 @@ A4: **AWS Step Functions**
 
 **Note**  
 This skill focuses on _delegation_: when stems emphasize “no servers to manage,” “self‑service but governed,” “built‑in rollback/monitoring,” or “replace custom orchestration/pooling,” choose the AWS service that abstracts that complexity. Proton, App Runner, Amplify, Fargate, Lambda, RDS Proxy, AppConfig, and Step Functions are archetypal answers. They shift advanced operational or architectural burdens to AWS, letting teams focus on business logic while still meeting compliance and reliability requirements.
+
+## Task 2.2: Design a solution to ensure business continuity
+
+### 1. Designing for Disruption Resilience
+
+Route 53 adds intelligent DNS routing so traffic flows to the healthiest or most appropriate endpoint—according to latency, geography, weighted percentages, or explicit health checks. Know when to use each policy, how TTL affects switchover speed, and when to layer Global Accelerator for sub‑second failover independent of DNS caching.
+
+- **Failover Policy:** primary → secondary switch driven by a Route 53 health check (classic active‑passive).
+- **Latency‑Based Routing (LBR):** directs users to the Region with the lowest RTT from their resolver.
+- **Weighted Routing:** distributes traffic by percentage (e.g., 10/90) for canary or gradual cutover.
+- **Multi‑Value Answer:** returns up to eight healthy IPs per query—lightweight load balancing + health‑based pruning.
+- **Geo / Geo‑Proximity Routing:** steers requests by user geography or biased distance—good for compliance (EU data residency) or regional load shaping.
+- **Simple Record:** static DNS—no health check, no smart routing.
+- **TTL Consideration:** low TTL (30–60 s) shortens cache duration, accelerating DNS‑based failover.
+- **AWS Global Accelerator (GA):** anycast IPs + edge health checks; bypasses DNS cache, shifting users to healthy endpoints in <30 s; integrates with ARC Zonal Shift for AZ‑level evacuation.
+
+**DNS‑Based Failover Patterns**
+
+- Use **Failover policy** when stems say “active‑passive” or “switch to DR site on health check failure.”
+- Use **Weighted 10/90** for canary traffic shifts; increase weight as metrics stay healthy.
+- **Latency‑Based** for “direct each user to closest Region for lowest latency.”
+- **Geo/GEO‑Proximity** when compliance or regional load biasing is required.
+
+**Caching and TTL**
+
+- Set TTL 30–60 s for any health‑based routing record; warn that ISPs may honor stale data—failover is not guaranteed under the TTL.
+
+**When to Add Global Accelerator**
+
+- If the exam stem demands **<30 s failover unaffected by DNS cache** (e.g., trading, gaming, VoIP), front endpoints with **GA**. Edge health checks + anycast IPs reroute independently of client DNS.
+- Combine **GA** with **ARC Zonal Autoshift** to evacuate a degraded AZ instantly: ARC triggers zonal shift, GA stops routing to that AZ.
+
+_(Exam clue mapping: “primary/secondary record” → Failover; “10 % traffic to new version” → Weighted; “lowest latency Region” → Latency‑Based; “EU users stay in EU” → Geo; “sub‑30 s failover regardless of DNS cache” → Global Accelerator.)_
+
+Q1: A website runs active‑passive across two Regions. It must fail over automatically when health checks fail, but occasional extended DNS caching is acceptable. Which Route 53 policy meets this?  
+A1: **Failover routing policy** with Route 53 health checks and a low TTL (e.g., 30 s).
+
+Q2: A global e‑commerce site needs each customer routed to the Region with the lowest latency. Which Route 53 feature should you use?  
+A2: **Latency‑Based Routing (LBR)**.
+
+Q3: You must expose a new API version to 10 % of traffic and increase gradually, with the option to roll back. Which routing approach fits?  
+A3: **Weighted routing** (e.g., 10/90) paired with CloudWatch‑driven rollback.
+
+Q4: A mission‑critical trading platform requires failover <30 s and must not rely on clients respecting DNS TTL. What architecture delivers this?  
+A4: Front endpoints with **AWS Global Accelerator**, which shifts traffic at the edge independent of DNS caching.
+
+**Note**  
+Route 53’s smart policies cover most DNS‑based failover and traffic‑shaping needs, but caching imposes a floor on switchover speed. For guarantees under 30 seconds—or to escape resolver cache entirely—deploy **Global Accelerator**, whose anycast IPs and edge health checks provide transport‑layer rerouting. Pair GA with **ARC Zonal Autoshift** for automatic AZ evacuation, and keep TTL low when using DNS health‑based policies to reduce cache lag.
+
+### 2. Disaster Recovery Configuration
+
+Combine service‑level replication, control‑plane failover, continuous resilience scoring, and immutable backups to meet diverse DR scenarios—from single‑AZ outages to Region‑wide failures and ransomware events.
+
+- **AWS Application Recovery Controller (ARC):** AZ‑level protection; _zonal shift_ (manual) or _zonal autoshift_ (automatic) drains Route 53 / Global Accelerator traffic from an impaired AZ in ≈30 s; includes routing controls & readiness checks for Region failover drills.
+- **AWS Resilience Hub:** registers application resources, evaluates actual vs target RTO/RPO across disruption types, generates remediation playbooks, and schedules re‑assessments that surface drift in Security Hub.
+- **AWS Backup + Vault Lock:** centralized policy engine for RDS, DynamoDB, EFS, EC2/EBS, FSx snapshots with cross‑Region copy; Vault Lock enforces WORM retention—root cannot delete or shorten after lock period.
+
+**Region‑Scale Recovery**
+
+Use **DRS** for pilot‑light or warm‑standby patterns when stems mention “Region meltdown,” “rebuild entire stack,” or “sub‑hour RTO, sub‑minute RPO without scripts.”
+
+**AZ‑Level Traffic Evacuation**
+
+Choose **ARC** when asked to “automatically drain traffic from an unhealthy AZ in <1 minute” or “Route 53/GA shift in 30 seconds.” FIS chaos tests plus ARC autoshift prove the automation.
+
+**Continuous Resilience Assurance**
+
+Register workloads in **Resilience Hub** to audit RTO/RPO targets daily; findings post to Security Hub/SNS if scores drop from _Achieved_ to _Breached_—ideal for governance and drift detection.
+
+**Immutable, Cross‑Region Backups**
+
+Implement **AWS Backup** with **Vault Lock** for ransomware protection or compliance “air gap.” Enable cross‑Region copy to cover data‑centric DR beyond live workload protection.
+
+_(Exam clue mapping: “full failover drill, no prod impact” → DRS Recovery Drill; “drain AZ traffic in seconds” → ARC autoshift; “periodic automatic resilience assessment” → Resilience Hub; “no one can delete backups early” → Backup Vault Lock.)_
+
+Q1: A company needs sub‑minute RPO and sub‑hour RTO if an entire Region becomes unavailable, with minimal custom scripting. Which service meets this?  
+A1: **AWS Elastic Disaster Recovery (DRS)**
+
+Q2: Compliance requires traffic to evacuate an Availability Zone automatically within 30 seconds of AWS‑detected degradation. What should you implement?  
+A2: **AWS Application Recovery Controller (ARC) zonal autoshift**
+
+Q3: A security team must ensure backup retention cannot be shortened or deleted—even by the root user—and must copy backups to another Region. Which solution fits?  
+A3: **AWS Backup** with **Vault Lock** and cross‑Region copy enabled
+
+Q4: Leadership requests daily verification that the application still meets 2‑hour RTO and 15‑minute RPO targets; any drift must raise an alert. Which AWS service provides this?  
+A4: **AWS Resilience Hub** scheduled assessments with alerts to Security Hub or SNS
+
+**Note**  
+Think of DR as layered defense:
+
+- **ARC** handles fast, AZ‑scoped traffic shifts (<1 min).
+- **DRS** rebuilds whole Regions in hours/minutes when the “parachute” is needed.
+- **Resilience Hub** acts as a continuous auditor, predicting gaps before disaster.
+- **AWS Backup + Vault Lock** is the immutable last line, ensuring data survives ransomware or operator error. Match exam stems to these layers: AZ outage → ARC; Region failure → DRS; continuous scoring → Resilience Hub; immutable backups → Vault Lock.
+
+### 3. Data and Database Replication Setup
+
+Select the right AWS replication service based on workload type (relational, NoSQL, object, block/file), required RPO/RTO, and write topology (single‑writer vs multi‑writer). The goal is to keep data durable and available across Region failures while meeting latency and compliance targets.
+
+- **Aurora Global Database:** engine‑side async log‑stream replication (<1 s RPO) to up to 10 secondary Regions; promote secondary in ≈60 s RTO (single‑writer model).
+- **DynamoDB Global Tables:** fully managed, multi‑active replication—every Region can write; last‑writer‑wins conflict resolution; single‑digit‑ms local latency.
+- **S3 Cross‑Region Replication (CRR):** bucket‑level async object copy (tags, ACLs, delete markers) to one or more Regions; supports lag metrics and alerts.
+- **EBS Snapshots / EBS Replication & EFS Replication:** point‑in‑time or continuous block replication (EBS) and one‑click read‑only file‑system replica (EFS) to a secondary Region.
+- **RDS Cross‑Region Read Replica:** engine‑native async replication (MySQL, MariaDB, PostgreSQL, Oracle, SQL Server); promote replica for minutes‑level RTO, seconds‑to‑minutes RPO.
+
+**RPO/RTO Targets ↔ Replication Mechanism**
+
+- Sub‑second RPO & ≈60 s RTO (relational) → **Aurora Global DB**.
+- Seconds‑to‑minutes RPO & RTO (traditional engines) → **RDS Cross‑Region Replica**.
+- Object compliance copy (hours RPO acceptable) → **S3 CRR**.
+
+**Write Topology / Latency**
+
+- Need global multi‑writer with <20 ms local latency → **DynamoDB Global Tables**.
+- Single‑writer primary + global reads → **Aurora Global DB** or **RDS Replica**.
+
+**Storage Type Fit**
+
+- Block or file workloads (lift‑and‑shift EC2/EFS) → **EBS Snapshots/Replication** or **EFS Replication**.
+- Unstructured objects / static site assets → **S3 CRR**.
+
+**Exam Clue Mapping**
+
+- “Sub‑second RPO, relational, writer in one Region” → Aurora Global DB.
+- “Multi‑Region active‑active writes, sub 20 ms latency” → DynamoDB Global Tables.
+- “Object data must have immutable off‑site copy” → S3 CRR.
+- “Lift‑and‑shift block/file data needs DR replica” → EBS/EFS Replication.
+- “Traditional MySQL, promote standby within minutes” → RDS Cross‑Region Replica.
+
+Q1: A financial application requires <1 s data loss and <1 min recovery if the primary Region fails. The workload is relational and write traffic goes to a single writer. Which service fits?  
+A1: **Aurora Global Database**
+
+Q2: A mobile game needs single‑digit‑millisecond read/write latency for players in North America and Europe. All Regions must accept writes. Which solution meets this with minimal ops?  
+A2: **DynamoDB Global Tables**
+
+Q3: Compliance mandates an immutable copy of all object data in another Region, and ops must receive alerts if replication lag exceeds an SLA. What should you implement?  
+A3: **S3 Cross‑Region Replication** with replication metrics and CloudWatch alarms.
+
+Q4: An on‑prem lift‑and‑shift workload uses EC2 with large EBS volumes and must support disaster recovery in another Region. Which replication approach is simplest?  
+A4: **EBS continuous replication or snapshot copy** (or AWS DRS, which uses the same stream).
+
+**Note**
+Choose replication services by matching storage type, RPO/RTO, and write topology. Aurora Global DB is the fastest single‑writer relational option; DynamoDB Global Tables is the only fully managed multi‑writer NoSQL solution at global scale. S3 CRR addresses object‑storage compliance, while EBS/EFS replication covers block/file DR for lift‑and‑shift servers. RDS Cross‑Region replicas fill the gap for classic engines with moderate recovery targets. Always watch exam stems for keywords: “sub‑second RPO,” “active‑active writes,” “immutable compliance copy,” or “lift‑and‑shift block storage”—they map directly to the services above.
+
+### 4. Automated and Cost-Effective Backup Architecture
+
+Centralize, automate, and harden backups across an entire AWS Organization while minimizing long‑term storage cost. AWS Backup applies account‑ or OU‑wide plans so every new RDS, DynamoDB, EFS, EC2/EBS, or FSx resource is protected without per‑team scripting. Vault Lock adds WORM immutability, and lifecycle rules tier aged recovery points to Glacier Deep Archive for up to 75 % cost savings.
+
+- **AWS Backup Plan:** policy that defines schedules, retention, lifecycle tiering, and copy rules; can be attached at account or OU scope.
+- **Organization‑Level Backup Policies:** centralized governance (requires AWS Organizations + Backup delegated admin) to auto‑enforce plans on all current and future accounts.
+- **Backup Vault & Vault Lock:** logical container for recovery points; Vault Lock sets WORM retention—root or compromised IAM cannot delete/shorten after a grace period.
+- **Lifecycle Tiering:** automatic transition of recovery points to cheaper storage classes, e.g., **S3 Glacier Deep Archive**.
+- **Cross‑Region / Cross‑Account Copy:** optional policy to replicate backups for DR.
+- **Cost Visibility:** AWS Backup reports and tagging feed Cost Explorer to track backup spend.
+
+**Governance and Automation**
+
+Attach an organization‑level backup policy to the root or specific OU; new RDS, DynamoDB, EBS, EFS, FSx resources inherit protection automatically—zero per‑team scripts.
+
+**Immutability and Compliance**
+
+Enable **Vault Lock** in the backup vault when stems require “ransomware protection” or “nobody can delete backups early.” After the lock grace period, retention is immutable.
+
+**Cost Optimization**
+
+Configure lifecycle rules to move snapshots older than N days to **Glacier Deep Archive**; reduces long‑term cost by up to ~75 % compared with Warm storage.
+
+**Disaster Recovery**
+
+Add cross‑Region copy inside the same plan to meet DR objectives without manual snapshot orchestration.
+
+_(Exam clue mapping: “govern backups across every account and Region” + “ensure no one deletes them early” → AWS Backup org‑level policy + Vault Lock; “reduce long‑term backup cost” → lifecycle to Glacier Deep Archive.)_
+
+Q1: A security mandate requires that backups for all accounts in an AWS Organization be immutable after seven days and retained for seven years. How should you meet this with minimal operational overhead?  
+A1: Configure an AWS Backup organization‑level policy with a backup vault that has **Vault Lock** enabled (7‑day lock configuration) and a 7‑year retention rule.
+
+Q2: A company wants to cut long‑term backup storage costs by 70 % while keeping daily recovery points for 90 days hot. What AWS Backup feature should be used?  
+A2: **Lifecycle tiering** in the backup plan to transition recovery points to **S3 Glacier Deep Archive** after 90 days.
+
+**Note**  
+AWS Backup acts as a policy engine: define schedules, retention, copy, and lifecycle once—apply everywhere. Vault Lock enforces WORM compliance similar to on‑prem tape, protecting against ransomware or rogue admin deletes. Lifecycle tiering plus Deep Archive meets budget constraints for multi‑year retention. When an exam stem stresses organization‑wide governance, immutable backups, or cost‑efficient archival, default to AWS Backup policies, Vault Lock, and lifecycle rules rather than ad‑hoc snapshots or third‑party scripts.
+
+### 5. Disaster Recovery and Chaos Testing
+
+Validate that resilience automation really works—before a real disaster. Use Elastic Disaster Recovery (DRS) for full‑scale failover drills, AWS Fault Injection Simulator (FIS) for controlled AZ chaos coupled with Application Recovery Controller (ARC) autoshift, and AWS Resilience Hub for continuous, policy‑based RTO/RPO scoring.
+
+- **AWS Fault Injection Simulator (FIS):** managed chaos service; predefined template _AZ Availability: Power Interruption_ yanks an AZ.
+- **Application Recovery Controller (ARC) Zonal Autoshift:** recovery action that drains Route 53 / Global Accelerator traffic from an unhealthy AZ in ~30 s.
+- **AWS Resilience Hub:** evaluates stacks’ RTO/RPO vs policy; scheduled daily scans raise findings to Security Hub or SNS when goals are breached.
+
+**Full DR Drills Without Production Impact**
+
+Use **DRS Recovery Drill** to launch replicas in the recovery Region, run end‑to‑end health checks, then terminate. Costs are limited to drill runtime.
+
+**Chaos Engineering for AZ Failure**
+
+Configure **FIS** experiment _AZ Availability: Power Interruption_ with a recovery action to invoke **ARC Zonal Autoshift**. Proves routing shifts within 30 seconds and alarms fire.
+
+**Continuous Assurance**
+
+Enable daily **Resilience Hub** assessments. If a workload’s calculated RTO/RPO drifts from “Achieved” to “Breached,” it posts a Security Hub finding or sends an SNS alert—treat it like a change request.
+
+_(Exam clues: “prove automation works, inject failure” → FIS + ARC; “run full fail‑over tests, no prod impact” → DRS Recovery Drill; “periodic automatic resilience assessment” → Resilience Hub.)_
+
+Q1: The ops team must run a complete fail‑over test of 200 EC2 servers in another Region without affecting production data and pay only for test hours. Which AWS service meets this?  
+A1: **Elastic Disaster Recovery (DRS) Recovery Drill**
+
+Q2: Compliance requires proof that traffic drains from an Availability Zone within 30 seconds of failure. How can you automate and validate this?  
+A2: Use **AWS Fault Injection Simulator** _AZ Availability: Power Interruption_ scenario with a recovery action that triggers **ARC Zonal Autoshift**.
+
+Q3: A workload’s RTO/RPO scores must be checked automatically every day and an alert raised if targets are breached. Which service should you enable?  
+A3: **AWS Resilience Hub** scheduled assessments with findings sent to Security Hub or SNS.
+
+**Note**  
+Testing resilience isn’t one‑and‑done. **DRS Recovery Drills** give low‑cost, on‑demand failover rehearsals. **FIS** plus **ARC autoshift** provides controlled chaos at the AZ layer to validate routing automation and alarms. **Resilience Hub** supplies continuous posture scoring—detecting when infrastructure drift or traffic growth silently breaks RTO/RPO promises. Together they form a proactive “sense, test, and improve” loop that the exam flags with phrases like “prove failover,” “inject failure,” or “continuous resilience assessment.”
+
+### 6. Centralized Monitoring and Proactive Recovery
+
+Build an organization‑wide “nerve system” that detects failures (metrics, logs, AWS Health events) and triggers automated remediation or coordinated alerts—delivering self‑healing and a single pane of glass for Ops/Sec teams.
+
+- **CloudWatch Metrics, Logs, Alarms:** ingest all application and infrastructure signals.
+- **Cross‑Account CloudWatch Observability:** share logs, metrics, and alarms into a monitoring‑hub account.
+- **Amazon EventBridge:** event bus that receives CloudWatch Alarm state changes or AWS Health events and routes them to targets (Automation runbooks, SNS, Chatbot).
+- **SSM Automation Runbook (SSM Document):** scripted remediation (restart ECS task, scale ASG, update WAF).
+- **AWS Health Dashboard / Health API:** publishes AWS infrastructure issues (AZ degradation, EBS impairment).
+- **Application Recovery Controller (ARC) Zonal Autoshift:** automatically drains Route 53 or Global Accelerator traffic from an unhealthy AZ (~30 s).
+- **SNS + Chatbot (Slack/MS Teams):** central alert topic integrated with collaboration tools.
+
+**Cross‑Account Nerve System**
+
+1. **Ingest:** push all metrics/logs to CloudWatch in each account.
+2. **Observe:** enable **cross‑account observability** or forward alarm state changes via **EventBridge PutEvents** to a monitoring hub account.
+3. **Remediate:** hub EventBridge rules invoke **SSM Automation runbooks** that heal (restart ECS task, scale ASG, block IP).
+   - _Exam clue_: “sense failure and auto‑remediate across all accounts” → CloudWatch Alarm → EventBridge → SSM runbook.
+
+**Platform‑Level Self‑Healing**
+
+- **AWS Health** events flow into EventBridge. **ARC Zonal Autoshift** subscribes and drains traffic from unhealthy AZs via Route 53/Global Accelerator in ≈30 s—no manual intervention.
+- Fan‑out Health events to PagerDuty, Slack, or war‑room SNS via EventBridge targets.
+
+**Single Pane of Glass**
+
+- Create a dedicated Ops/Sec master account.
+  - Owns an **SNS “high‑sev” topic**.
+  - Integrates **AWS Chatbot** with Slack/MS Teams.
+  - EventBridge rules in the hub filter `state = ALARM` or `detail-type = AWS_HEALTH_EVENT` and forward to SNS/Chatbot.
+- _Exam clues_: “central notification,” “single pane,” “cross‑Region/X‑account visibility” → CloudWatch cross‑account + EventBridge + central SNS/Chatbot.
+
+Q1: You must detect failures across every AWS account, automatically restart a failed ECS task, and notify a central Slack channel. What architecture meets this with least ops overhead?  
+A1: CloudWatch Alarm → EventBridge cross‑account bus → SSM Automation runbook (restart task) + SNS → AWS Chatbot in a hub account.
+
+Q2: An AZ network impairment must drain traffic within 30 seconds without operator action. Which service provides this?  
+A2: **AWS Application Recovery Controller (ARC) Zonal Autoshift** (subscribes to AWS Health events and shifts Route 53/Global Accelerator traffic).
+
+Q3: Operations needs a single console that aggregates CloudWatch alarms and AWS Health events from all Regions and accounts. What combination is best?  
+A3: Enable **CloudWatch cross‑account observability** (or forward via EventBridge) and route events to a central **SNS topic** integrated with **AWS Chatbot**.
+
+**Note**  
+Centralised “sense and heal” combines:
+
+1. **Detection** (CloudWatch alarms, AWS Health),
+2. **Aggregation** (cross‑account CloudWatch or EventBridge),
+3. **Automation** (SSM runbooks, ARC autoshift), and
+4. **Notification** (SNS, Chatbot).
+
+When stems emphasize “auto‑remediate,” “cross‑account visibility,” or “single pane,” map to CloudWatch → EventBridge → SSM and central SNS/Chatbot. For AZ‑level AWS failures, ARC autoshift plus AWS Health provides automated traffic evacuation beyond what stack‑local alarms can detect.
 
 ## Task 2.4 - Design a strategy to meet reliability requirements
 
