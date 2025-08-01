@@ -1076,3 +1076,414 @@ A6: **Lambda Insights** `ColdStartDuration` and `InitDuration` metrics.
 
 Q7: After sharding a key‑value store, ops need to verify P99 latency dropped below 5 ms per shard. Which tool quickly validates?  
 A7: Use **Metric Math percentile** calculation on `DynamoDBSuccessfulRequestLatency` grouped by `partition-id` in CloudWatch.
+
+### Task 3.4: Determine a strategy to improve reliability.
+
+### 1. Usage Trend Forecasting
+
+Forecasting and reacting to usage growth in time—so the system scales _before_ traffic surges and avoids hitting soft capacity limits. This module is about understanding utilization patterns, applying predictive scaling, and preempting quota bottlenecks that could cause outages.
+
+- **CloudWatch Metrics Insights:** SQL-based query engine to aggregate and filter CloudWatch metrics in near real time; great for live operational dashboards and usage trend exploration;
+- **Predictive Scaling (Auto Scaling):** ML-based forecasting for EC2 Auto Scaling Groups; adjusts capacity in advance based on anticipated load within a 48-hour window;
+- **Service Quotas + CloudWatch Alarms:** Monitors AWS soft limits like EC2 instances per Region or ENIs per VPC, and triggers alerts before limits block scaling actions;
+- **CloudWatch Anomaly Detection:** Applies statistical models to detect deviations from historical baselines and generate dynamic threshold alarms;
+- **AWS Compute Optimizer:** Analyzes historical usage and recommends rightsized EC2/RDS/Auto Scaling configurations for future efficiency.
+
+**Proactive Scale-Up ↔ Predictive Scaling**
+
+“Anticipate a traffic spike and warm up EC2 instances early” → Enable **Predictive Scaling** for EC2 ASG to ensure capacity ramps ahead of demand.
+
+**Quota Bottleneck ↔ Service Quotas Alarm**
+
+“EC2 limit nearly exhausted, scale-out might fail” → Set **CloudWatch alarm on Service Quotas** and auto-file a request or divert traffic if nearing limit.
+
+**Live KPI Insights ↔ Metrics Insights SQL**
+
+“Rank ASGs by CPU average this week” → Use **Metrics Insights** to query and compare usage data in real time, guiding scaling decisions.
+
+**Dynamic Thresholds ↔ Anomaly Detection**
+
+“Don’t use static alarm thresholds—need pattern-aware alerting” → Enable **Anomaly Detection** on CloudWatch metrics for smarter notifications.
+
+**Capacity Planning ↔ Compute Optimizer Trends**
+
+“Want long-term EC2 trends and resize advice” → Use **Compute Optimizer** for forecasted usage and rightsizing opportunities.
+
+Q1: A social media campaign will spike EC2 traffic in 10 minutes. How can the app prepare capacity ahead of time?  
+A1: Use Predictive Scaling in EC2 Auto Scaling.
+
+Q2: The ops team wants to run SQL-like queries to list the 5 busiest Auto Scaling groups over the last 7 days.  
+A2: Use CloudWatch Metrics Insights.
+
+Q3: A CloudWatch alarm triggers based on learned baselines, not fixed thresholds. What feature enables this?  
+A3: CloudWatch Anomaly Detection.
+
+Q4: Batch workloads cause overprovisioning overnight. What should be done to optimize capacity reductions?  
+A4: Enable predictive scale-in or use a target tracking policy to reduce ASG desired capacity.
+
+Q5: Spot capacity scale-out failed due to quota exhaustion. What’s the best preventive solution?  
+A5: Set a CloudWatch alarm on Service Quotas and automatically request a quota increase or switch to On-Demand.
+
+### 2. Reliability Gap Assessment
+
+Measuring how well an architecture meets stated RTO/RPO and availability goals—then closing the gaps. This module centers on _assessing_ current resilience posture, _pinpointing_ missing controls, and _steering_ traffic when an Availability Zone or Region drifts out of spec.
+
+- **AWS Resilience Hub:** evaluates an application’s configuration against resilience policies, calculates achieved RTO/RPO, and outputs prioritized remediation actions;
+- **Route 53 ARC Readiness Checks:** continuously probe endpoints, ALB/NLB targets, and Route 53 records to verify cross-AZ/Region failover readiness;
+- **Route 53 ARC Zonal Shift:** temporarily evacuates traffic away from a single AZ for ALB/NLB, giving time to fix issues without full Regional failover;
+- **AWS Fault Injection Simulator (FIS):** injects controlled faults (AZ outages, network black-holes) to test whether remediation plans work as designed;
+- **CloudWatch Alarms + EventBridge Automation:** detect unhealthy states and invoke SSM/Lambda runbooks to enforce automatic recovery workflows;
+
+**DR Gap Analysis ↔ Resilience Hub Assessment**
+
+“Which control is missing to hit a 1-hour RTO?” → Run **Resilience Hub**; review remediation list (e.g., enable multi-AZ RDS, configure automated backups).
+
+**Failover Readiness ↔ ARC Readiness Checks**
+
+“Need proof ALB can fail over cross-AZ/Region right now” → Use **Route 53 ARC readiness checks** to validate endpoints and health check configuration.
+
+**Impaired AZ Mitigation ↔ ARC Zonal Shift**
+
+“A single AZ is flapping—shift traffic quickly without DNS TTL delay” → Trigger **Route 53 ARC zonal shift** for the ALB to keep service healthy.
+
+**Chaos Validation ↔ FIS Experiments**
+
+“Want evidence that auto-scaling and failover really recover under stress” → Create **FIS experiment** to simulate instance loss or AZ outage.
+
+**Automated Remediation ↔ Alarms & Runbooks**
+
+“Policy requires automatic rollback if latency > 500 ms for 5 min” → CloudWatch alarm → EventBridge → SSM Automation / Lambda rollback script.
+
+Q1: Management asks which AWS tool reports whether the current design meets a 15-minute RPO and suggests missing controls.  
+A1: **AWS Resilience Hub**.
+
+Q2: A single Availability Zone’s networking is impaired and causing elevated 5xx errors. Operations want to drain traffic from that AZ immediately while keeping the load balancer online.  
+A2: **Route 53 ARC zonal shift** on the affected ALB/NLB.
+
+Q3: Security demands continuous evidence that DNS health checks will reroute traffic if a Region goes down. Which feature provides this dashboard and alerting?  
+A3: **Route 53 ARC readiness checks**.
+
+Q4: During a game launch, you need to prove that Auto Scaling recovers from an unexpected instance termination in under 2 minutes. What’s the best AWS-native method?  
+A4: Run an **AWS FIS** experiment that stops instances and monitors recovery.
+
+Q5: An architecture review reveals manual runbooks for failover. To comply with “automatic remediation” policy, what should be added?  
+A5: **CloudWatch alarms triggering EventBridge rules** that start **SSM Automation** or **Lambda** runbooks.
+
+Q6: After enabling Resilience Hub, the report flags an RDS instance in single-AZ mode, violating the 99.99 % availability objective. What remediation should be applied?  
+A6: Convert RDS to **Multi-AZ deployment** (or Aurora cluster with reader in a second AZ).
+
+Q7: The ops team wants to test whether shifting traffic out of an AZ increases latency beyond SLA before production. Which combined services enable this test?  
+A7: Use **FIS** to simulate AZ outage, then invoke **ARC zonal shift** and monitor **CloudWatch** metrics.
+
+### 3. SPOF Remediation
+
+Eliminating single points of failure (SPOFs) across database, network, and load-balancing layers—so any single-AZ or component outage does **not** take the service offline. This module focuses on duplicating critical resources **per Availability Zone**, enabling fast, automated failovers, and balancing traffic evenly to uphold SLAs.
+
+- **RDS Multi-AZ Deployment:** maintains a synchronous standby in a second AZ with automated failover in ~60–120 s; for Aurora, reader endpoints and automatic failover achieve <30 s recovery;
+- **One NAT Gateway per AZ:** deploy independent NAT GWs inside each private-subnet AZ to eliminate cross-AZ dependencies and avoid inter-AZ data charges;
+- **ELB Cross-Zone Load Balancing:** evenly distributes traffic across all registered targets in all AZs; removes reliance on client-side DNS hashing and prevents hotspotting;
+- **Gateway Load Balancer + Appliances:** provides transparent, per-AZ insertion of firewalls/IPS without introducing a centralized choke point;
+- **Multi-AZ EFS / FSx:** file systems replicate synchronously across AZs, ensuring storage durability and availability when an AZ fails;
+- **DynamoDB Global Tables / Multi-Region Active-Active:** removes Region-level SPOF for critical key–value workloads.
+
+**Database SPOF ↔ Multi-AZ / Cluster**
+
+“Single-AZ RDS instance threatens uptime” → Convert to **RDS Multi-AZ** or **Aurora cluster** with automatic failover.
+
+**Network Egress SPOF ↔ Per-AZ NAT Gateways**
+
+“Only one NAT GW in public subnet” → Create **one NAT GW per AZ** and route each private subnet to its local gateway.
+
+**Load Distribution SPOF ↔ Cross-Zone LB**
+
+“Requests stick to one AZ causing imbalance” → Enable **cross-zone load balancing** on ALB/NLB to share traffic evenly.
+
+**Inspection Appliance SPOF ↔ GWLB**
+
+“Central firewall cluster in one AZ” → Deploy **Gateway Load Balancer** endpoints in every AZ with auto-scaling appliances.
+
+**File-System SPOF ↔ Multi-AZ Storage**
+
+“EFS One Zone risks data loss” → Use **EFS Standard (Multi-AZ)** or **FSx File Gateway** with automatic AZ replication.
+
+Q1: A production MySQL RDS instance is currently single-AZ. Which adjustment removes the database SPOF with the least change?  
+A1: Convert the instance to **RDS Multi-AZ deployment**.
+
+Q2: A VPC has private subnets in three AZs but a single NAT gateway in AZ-A. During an AZ-A outage, all outbound internet traffic fails. How should this be fixed?  
+A2: Deploy **one NAT gateway per Availability Zone** and update route tables accordingly.
+
+Q3: Users in AZ-C see higher latency because most client DNS resolutions target ALB nodes in AZ-A. What AWS feature corrects this?  
+A3: **Enable cross-zone load balancing** on the Application Load Balancer.
+
+Q4: A central firewall appliance in AZ-B processes all east-west traffic; if that AZ fails, traffic is blocked. What is the recommended design?  
+A4: Use **Gateway Load Balancer** with appliances deployed in every AZ.
+
+Q5: A legacy workload requires shared POSIX storage and currently uses EFS One Zone to save cost, raising durability concerns. What is the SPOF-free alternative?  
+A5: Migrate to **EFS Standard (Multi-AZ)** to replicate data across multiple AZs.
+
+Q6: During an audit, you must prove that no single AZ failure can interrupt DynamoDB writes. Which feature addresses this requirement?  
+A6: **DynamoDB Global Tables** (multi-Region active-active) or at minimum **DynamoDB table with auto-scaling and point-in-time recovery** across AZs.
+
+### 4. Replication & Self-Healing
+
+Keeping data durable across AZs/Regions **and** making compute fleets recover autonomously. This module pairs the right replication technology to a given RTO/RPO with automated instance replacement, so workloads survive storage loss, AZ failure, or full-Region disasters without operator scramble.
+
+- **S3 Replication Time Control (RTC):** cross-Region replication that delivers 99.99 % of objects within 15 minutes, backed by an SLA guaranteeing 99.9 % in that window; ideal for compliance-driven backups and multi-Region static content. :contentReference[oaicite:0]{index=0}
+- **Aurora Global Database:** asynchronously replicates data to up to five secondary Regions with <1 s typical RPO and managed failover that now completes in ~30 s. :contentReference[oaicite:1]{index=1}
+- **AWS Elastic Disaster Recovery (DRS):** continuous block-level replication of on-prem or EC2 workloads to a staging area in AWS, achieving second-level RPO and 5–20 min RTO when you launch recovery instances. :contentReference[oaicite:2]{index=2}
+- **Auto Scaling Health Checks:** EC2/ELB health probes automatically terminate and replace failed instances, ensuring fleet self-healing without human intervention;
+- **CloudWatch Alarms + Lifecycle Hooks:** tie alarms to Auto Scaling lifecycle hooks or EventBridge rules for custom remediation (warm AMI swap, config script, etc.).
+
+**Tight RPO (<1 min) ↔ Aurora Global**
+
+“Regulatory mandate: ≤1 min data loss if Region fails” → **Aurora Global Database** with managed writer failover.
+
+**15 min Replication SLA ↔ S3 RTC**
+
+“Backups must be safely stored off-Region inside 15 min” → Enable **S3 Replication Time Control** on the bucket.
+
+**Lift-and-Shift DR ↔ AWS DRS**
+
+“Need DR for 200 on-prem VMs, RPO seconds, RTO <20 min” → Use **AWS Elastic Disaster Recovery** with block-level replication.
+
+**Instance Failure Self-Heal ↔ Auto Scaling**
+
+“An EC2 dies—replace it automatically” → **Auto Scaling Group** with ELB + EC2 status health checks triggers instance replacement.
+
+**Custom Remediation ↔ Alarms & Hooks**
+
+“Run config script before adding new instances” → Use **Lifecycle Hooks** and **CloudWatch Alarms/EventBridge** to execute SSM documents.
+
+Q1: A financial app requires that no more than one minute of data is lost and recovery is automatic if a Region outage occurs.  
+A1: Use **Aurora Global Database** with managed cross-Region failover.
+
+Q2: Security policy states backups must reside in another Region within 15 minutes of creation. Which feature meets this SLA?  
+A2: **S3 Replication Time Control (RTC)**.
+
+Q3: An on-prem VMware cluster needs disaster recovery to AWS with second-level RPO and sub-20-minute RTO. What’s the simplest AWS-native solution?  
+A3: **AWS Elastic Disaster Recovery**.
+
+Q4: During a load test, one EC2 instance froze and stayed unhealthy for 10 minutes until an engineer intervened. How do you automate recovery?  
+A4: Place the instances in an **Auto Scaling Group** with EC2/ELB health checks to terminate and replace failed nodes automatically.
+
+Q5: After a failover drill, you want new instances to run a hardening script before joining the fleet. Where is the best place to insert that step?  
+A5: Add an **Auto Scaling Lifecycle Hook** that invokes an **SSM Run Command** or **Lambda** during the `Pending:Wait` state.
+
+## Task 3.5: Identify opportunities for cost optimizations
+
+### 1. Usage Analytics
+
+Surfacing under-/over-utilized resources and sudden spend spikes so you can right-size, shut down, or re-purchase before money is wasted. This module is about _seeing_ the cost signals—across compute, storage, and accounts—and _acting_ on them with targeted optimizations.
+
+- **Cost Explorer Resource Optimization dashboards:** show idle or over-sized EC2, RDS, and Lambda assets and estimate savings from downsizing or deletion; now accessible via the Cost Optimization Hub dashboard;
+- **AWS Compute Optimizer (Jan 2025 update):** adds idle & rightsizing recommendations for mixed-instance Auto Scaling groups, analyzing scaling policies and utilization for precise actions;
+- **Trusted Advisor cost checks (Jun 2025):** integrated 16 new actionable insights from Cost Optimization Hub—centralizing savings suggestions across services and accounts;
+- **Cost Anomaly Detection (Jul 2025 ML enhancements):** faster, richer anomaly flags with improved accuracy for unpredictable spend patterns;
+
+**Idle / Over-sized Resources ↔ Cost Explorer Dashboards**
+
+“CUR shows low CPU on dozens of EC2 instances—where do I see savings?” → Use **Cost Explorer Resource Optimization** dashboard or **Cost Optimization Hub** view.
+
+**Mixed-Instance ASG Rightsizing ↔ Compute Optimizer**
+
+“A heterogeneous ASG seems over-provisioned; need precise rightsizing.” → Refer to **Compute Optimizer Jan 2025 idle & rightsizing recommendations**.
+
+**Org-Wide Actionable Advice ↔ Trusted Advisor + Cost Optimization Hub**
+
+“Leadership wants a single report of highest-impact savings across all accounts.” → Open **Trusted Advisor** (16 new Hub-fed checks) or **Cost Optimization Hub** consolidated list.
+
+**Sudden Spend Spike ↔ Cost Anomaly Detection**
+
+“Yesterday’s bill tripled—must find the cause fast.” → Rely on **Cost Anomaly Detection** ML alerts (July 2025 improvements).
+
+**Budget Governance ↔ Budgets + Anomaly Links**
+
+“Need to auto-notify finance if spend exceeds forecast by >10 %.” → Configure **AWS Budgets** tied to **Cost Anomaly Detection** alert topics.
+
+Q1: A finance analyst needs a single dashboard showing the dollar impact of idle Lambda functions and over-sized RDS instances across all Regions and accounts. Which AWS feature provides this?  
+A1: **Cost Optimization Hub** dashboard (also feeds Trusted Advisor).
+
+Q2: An Auto Scaling group that mixes m6i and c7i instances appears too large. Which 2025 AWS service update gives explicit idle & rightsizing recommendations for this scenario?  
+A2: **AWS Compute Optimizer** (Jan 2025 idle & rightsizing update).
+
+Q3: Yesterday a rogue script ran, doubling S3 storage costs within hours. Which AWS service detects and flags such unexpected spend patterns the fastest?  
+A3: **AWS Cost Anomaly Detection** (with July 2025 model enhancements).
+
+Q4: Leadership wants an aggregated list of top 10 savings actions, including potential monthly savings and affected accounts. Which tool meets this need?  
+A4: **Trusted Advisor** cost checks powered by **Cost Optimization Hub** (June 2025 16-check expansion).
+
+Q5: An engineer sees many “zombie” EBS volumes in Cost and Usage Reports and wants AWS to quantify and visualize potential savings. Where should they look first?  
+A5: **Cost Explorer Resource Optimization dashboard** (or the same data surfaced via Cost Optimization Hub).
+
+Q6: After applying Compute Optimizer rightsizing, the team needs continuous monitoring to ensure costs stay within budget. What AWS service links anomaly alerts to budget thresholds?  
+A6: **AWS Budgets** combined with **Cost Anomaly Detection** notifications.
+
+### 2. Unused-Resource Detection
+
+Finding and eliminating **idle volumes, load balancers, NAT gateways, snapshots, and other “zombie” assets** that silently drain money and clutter your environment. This module is about discovering stale resources on a continuous cadence and removing them under clear governance rules.
+
+- **Trusted Advisor Idle Resource checks:** flag under-utilized ELB, EBS, NAT, and other assets; checks refresh multiple times per day and estimate monthly savings per resource; centralized in the Cost Optimization category.
+- **AWS Well-Architected Guidance AG.ACG.8 (Jul 2025):** recommends automated scans plus tagging policies to identify & delete unused resources, tying clean-up to cost, reliability, and security goals.
+- **Community cleanup dashboards / Lambda automations (Apr 2025):** open-source serverless solutions purge orphaned EBS snapshots, ELBs, and other leftovers via EventBridge-scheduled Lambda, Terraform modules, or Python/Boto3 scripts.
+
+**Idle Infrastructure ↔ Trusted Advisor**
+
+“Hundreds of unattached volumes and dormant Classic ELBs” → Run **Trusted Advisor Idle Resource** checks and act on the savings report.
+
+**Governance Best Practice ↔ AG.ACG.8**
+
+“Policy requires periodic scans and tag-based deletion” → Follow **Well-Architected AG.ACG.8**: automate discovery, enforce tagging, and schedule cleanup.
+
+**Automated Purge ↔ Lambda Scripts**
+
+“Need hands-off deletion of orphaned snapshots each week” → Deploy **community Lambda/EventBridge cleanup solutions** or custom scripts.
+
+**Cross-Account Visibility ↔ Cost Optimization Hub**
+
+“CFO wants org-wide view of zombie assets” → Combine **Trusted Advisor reports** with **Cost Optimization Hub** export.
+
+Q1: A cost-review shows dozens of idle NAT gateways left from test environments. Which AWS native service flags and quantifies these for removal?  
+A1: **Trusted Advisor Idle Resource checks**.
+
+Q2: Architecture governance mandates automated scans and tag-based cleanup of unused assets every month. Which Well-Architected control enforces this?  
+A2: **AG.ACG.8 – Conduct regular scans to identify and remove unused resources**.
+
+Q3: An engineer wants to purge orphaned EBS snapshots nightly without manual approval. What is the simplest AWS-native approach?  
+A3: Schedule a **Lambda function triggered by EventBridge** (or use a community cleanup module) to delete the snapshots automatically.
+
+Q4: Leadership asks for a single place to download the latest idle-resource report across all accounts and Regions. Where should they look?  
+A4: **Trusted Advisor dashboard** (or its CSV export) aggregated in the **Cost Optimization Hub**.
+
+Q5: A dormant Classic Load Balancer has been incurring monthly charges for over a year. What tool alerts you to shut it down before the next bill?  
+A5: **Trusted Advisor Idle Load Balancer check** (part of Idle Resource category).
+
+Q6: To comply with internal policy, you must tag any resource scheduled for deletion and retain logs of the cleanup action. Which combination meets this?  
+A6: Use **Lambda cleanup automation** that adds a “Delete=Scheduled” tag, deletes after TTL, and logs actions to **CloudWatch Logs** / **AWS Config**.
+
+### 3. Cost Alerts & Budgets
+
+Triggering notifications **before** runaway spend hurts the bottom line—by combining budget thresholds, anomaly-driven alarms, and custom messaging pipelines that meet finance-team needs.
+
+- **AWS Budgets enhanced metrics & exclusion filters (Apr 2025):** supports _net-unblended_ / _net-amortized_ cost metrics and granular “exclude credits, RI/SP discounts” filters, enabling budgets that track true post-discount spend.
+- **SNS + Lambda custom budget-alert pipelines (Blog, Jul 2025):** event-driven architecture publishes budget notifications to an SNS topic; a Lambda function rewrites the message body (HTML/Slack JSON) and forwards it to e-mail, chat, or ticket systems—centralizing automated budget governance across multiple accounts.
+- **Cost Anomaly Detection model enhancements (Jul 2025):** improved ML catches spend spikes sooner and with fewer false positives; integrates directly with Budgets to link anomaly severity to budget thresholds.
+- **Budget Actions & SCPs:** automatically apply IAM or Service Control Policies when a threshold is crossed (e.g., stop new EC2 launches in a dev account).
+- **AWS Budgets Notifications best-practice:** up to 10 e-mail + 1 SNS subscriber per alert; supports _actual_ and _forecast_ thresholds with separate percentages.
+
+**Forecast Overshoot ↔ Forecast-Based Budgets**
+
+“Alert when projected spend exceeds monthly limit” → Configure **forecasted cost** budget with enhanced metrics & exclusion filters.
+
+**Net-After-Discount Tracking ↔ Net Cost Metric**
+
+“Finance wants alerts on spend _after_ RI/SP discounts” → Use **net unblended / net amortized** metrics in Budgets (Apr 2025 update).
+
+**Custom Message Routing ↔ SNS + Lambda**
+
+“Send Slack-formatted alerts with account tags in body” → Publish budget alert to **SNS** → invoke **Lambda** to format and forward.
+
+**Spike Without Threshold Breach ↔ Anomaly Detection**
+
+“Cost jumps 40 % overnight (below budget cap) needs flag” → Enable **Cost Anomaly Detection** for proactive ML-based alerting.
+
+**Enforcement on Breach ↔ Budget Actions**
+
+“Block new Spot requests if spend > 110 % of budget” → Attach **budget action** that applies an SCP to the account.
+
+Q1: The finance team must be alerted when _forecasted net unblended cost_ exceeds 95 % of monthly budget. Which 2025 feature enables this?  
+A1: **AWS Budgets enhanced metrics & exclusion filters** (Apr 2025).
+
+Q2: You need Slack-rich budget alerts containing account owners and cost center tags. What’s the recommended design?  
+A2: Route **AWS Budgets notifications to an SNS topic**, trigger a **Lambda function** to customize the alert payload, then forward to Slack.
+
+Q3: Spend suddenly spikes by \$15 k within six hours—well before the monthly budget threshold. Which AWS service detects and notifies first?  
+A3: **AWS Cost Anomaly Detection** (Jul 2025 ML enhancements).
+
+Q4: A dev account should automatically block new EC2 launches once actual spend hits \$2 000. Which Budgets capability provides this control?  
+A4: **Budget Actions** applying a **Service Control Policy (SCP)** to deny `ec2:RunInstances`.
+
+Q5: Leadership requests a single alert when _net amortized_ cost across all linked accounts surpasses \$100 k, ignoring credits. Which settings meet this?  
+A5: Create an **Organization-wide cost budget** using the **net amortized** metric with **credit exclusions**, set threshold at \$100 k, and add Org-level SNS notification.
+
+Q6: Engineers want to receive only one alert e-mail when a forecast breach occurs—no repeats. Which Budgets alert type satisfies this?  
+A6: Configure an **Actual-value** budget alert (fires once per period) instead of forecast-based rolling alerts.
+
+### 4. Granular CUR Investigation
+
+Attributing every dollar to the exact **micro-service, Kubernetes namespace, or business unit**—so teams can own their spend. This module shows how to mine the Cost & Usage Report (CUR) at container-level granularity, analyze it with SQL, and roll-up results into custom cost categories for chargeback or showback.
+
+- **Cost & Usage Report (CUR) – Split Cost Allocation (Feb 2025):** now adds per-container line items for Amazon ECS tasks and EKS pods—including tags such as `aws:eks:namespace`, enabling namespace-level cost visibility.
+- **Amazon Athena + CUR:** serverless SQL engine that queries CUR data in S3 for ad-hoc, per-resource breakdowns (top pods, tasks, or EC2 instances by cost). :contentReference[oaicite:1]{index=1}
+- **AWS Cost Categories:** groups CUR line items into business-defined buckets (e.g., _Team A_, _Shared Infra_) using dimensions like tag, account, or service, then surfaces them in Cost Explorer, Budgets, and CUR exports.
+- **Cost Allocation Tags:** key–value labels (team, environment) that feed into both CUR and Cost Categories for precise attribution.
+
+**Micro-Service Attribution ↔ Split Cost Allocation CUR**
+
+“Which K8s namespace drove last week’s S3 charge?” → Query **CUR with container-level split cost allocation** records.
+
+**Interactive Drill-Down ↔ Athena SQL**
+
+“List top 10 ECS tasks by storage cost” → Run **Athena** query on the CUR external table.
+
+**Org-Wide Roll-Up ↔ Cost Categories**
+
+“Finance needs costs grouped by ‘Product Line’ across all accounts” → Create **Cost Categories** rules that map tags/accounts into products.
+
+**Tag Governance ↔ Cost Allocation Tags**
+
+“Spend must be taggable to owners” → Enforce **mandatory cost allocation tags** (department, project) and propagate them into CUR.
+
+Q1: A spike appears in the bill and you must identify the exact Kubernetes namespace responsible. Which AWS data source provides namespace-level cost rows?  
+A1: **Cost & Usage Report with split cost allocation data** (container-level granularity).
+
+Q2: An analyst wants to run SQL to find the five most expensive EKS pods yesterday. What AWS service should they use?  
+A2: **Amazon Athena** querying the CUR stored in S3.
+
+Q3: Leadership needs a monthly report that groups spend into _Core Platform_, _Shared Services_, and _Customer Facing_ buckets across multiple accounts. Which feature enables this roll-up?  
+A3: **AWS Cost Categories** with custom rules.
+
+Q4: Tag `Project=Alpha` is missing on some EC2 instances, causing unallocated costs. How do you ensure those costs can still be reported under “Alpha” going forward?  
+A4: Activate **Cost Allocation Tags** and create a **Cost Category rule** that maps any untagged resources in Alpha accounts to the _Alpha_ category.
+
+Q5: Finance asks for proof that container-level costs are included in the CUR export. What column or record type confirms this?  
+A5: Presence of **split cost allocation** line items (ECS task or EKS pod IDs) in the CUR, showing CPU and memory cost percentages.
+
+### 5. Tagging & Charge-Back
+
+Assigning every cost line item to a **project, team, or business unit**—and giving finance self-service visibility—depends on _consistent tags_, _enforcement policies_, and dashboards that roll costs up by category.
+
+- **Cost Categories Tagging Support (Jul 2025):** you can now attach user-defined tags to the Cost Category objects themselves, enabling fine-grained IAM access and additional allocation dimensions.
+- **Tag Policies in AWS Organizations:** org-level policies enforce mandatory cost-allocation tags (e.g., `Project`, `CostCenter`) across all accounts; July 2025 wildcard update simplifies applying one rule to _all_ resource types.
+- **Cost Explorer Cost Categories dashboards:** visualize spend broken down by custom categories and tags, letting finance drill into _per-project_ or _per-team_ costs without SQL.
+- **Cost Allocation Tags (standard & AWS-generated):** foundational mechanism—once activated, tags flow into the Cost & Usage Report and Cost Categories for accurate charge-back.
+
+**Project Charge-Back ↔ Cost Categories**
+
+“Finance needs spend by _Product Line_ and _Environment_” → Define **Cost Categories** mapping tags/accounts into those groupings, then share dashboards.
+
+**Tag Enforcement ↔ Tag Policies**
+
+“Resources must carry `CostCenter` before launch” → Apply **Tag Policy** with mandatory keys and approved values; rely on July 2025 wildcard rule for all EC2/S3 resources.
+
+**Self-Service Visibility ↔ Dashboards**
+
+“Finance wants a no-code view of per-team costs” → Grant **Cost Explorer** access scoped to tagged **Cost Categories**.
+
+**Budget & Alert Integration ↔ Budgets + Anomaly**
+
+“Alert each team when its category exceeds $X” → Create **AWS Budgets** using the _Cost Category_ dimension; tie to **Cost Anomaly Detection** for proactive spikes.
+
+Q1: Finance requires that every AWS resource include `Project` and `CostCenter` tags, or creation should be blocked. Which feature enforces this org-wide?  
+A1: **Tag Policies** in AWS Organizations (with wildcard support).
+
+Q2: A cloud analyst must give Product owners a dashboard showing only the spend for their projects without exposing other teams’ data. What 2025 feature enables this least-privilege access?  
+A2: **Tagged Cost Categories** combined with IAM policies referencing those tags.
+
+Q3: Leadership wants monthly alerts when _Cost Category = Shared Services_ exceeds $50 k. Which service combines these dimensions with thresholds?  
+A3: **AWS Budgets** filtered by the _Shared Services_ cost category.
+
+Q4: An untagged EC2 fleet was launched by accident. Governance demands a report of all untagged resources and their cost impact. What is the best approach?  
+A4: Use **Cost Explorer** (or CUR) filtered where `Cost Allocation Tag = null`, then assign those costs to an “Unallocated” **Cost Category** for visibility.
+
+Q5: A finance controller needs to restrict Cost Explorer access so a team can only see costs where `Project=Alpha`. How can this be implemented?  
+A5: Tag the _Alpha_ **Cost Category** with `Project=Alpha` and attach an IAM policy that grants `ce:*` actions conditioned on that tag.
