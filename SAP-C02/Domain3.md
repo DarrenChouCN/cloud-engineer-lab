@@ -1413,7 +1413,7 @@ A6: Configure an **Actual-value** budget alert (fires once per period) instead o
 Attributing every dollar to the exact **micro-service, Kubernetes namespace, or business unit**—so teams can own their spend. This module shows how to mine the Cost & Usage Report (CUR) at container-level granularity, analyze it with SQL, and roll-up results into custom cost categories for chargeback or showback.
 
 - **Cost & Usage Report (CUR) – Split Cost Allocation (Feb 2025):** now adds per-container line items for Amazon ECS tasks and EKS pods—including tags such as `aws:eks:namespace`, enabling namespace-level cost visibility.
-- **Amazon Athena + CUR:** serverless SQL engine that queries CUR data in S3 for ad-hoc, per-resource breakdowns (top pods, tasks, or EC2 instances by cost). :contentReference[oaicite:1]{index=1}
+- **Amazon Athena + CUR:** serverless SQL engine that queries CUR data in S3 for ad-hoc, per-resource breakdowns (top pods, tasks, or EC2 instances by cost).
 - **AWS Cost Categories:** groups CUR line items into business-defined buckets (e.g., _Team A_, _Shared Infra_) using dimensions like tag, account, or service, then surfaces them in Cost Explorer, Budgets, and CUR exports.
 - **Cost Allocation Tags:** key–value labels (team, environment) that feed into both CUR and Cost Categories for precise attribution.
 

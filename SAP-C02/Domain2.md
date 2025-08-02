@@ -53,7 +53,6 @@ Q6: During a production stack update, stakeholders must preview the exact resour
 A6: Create and review a CloudFormation Change Set, then execute it after approval.
 
 **Note**
-
 IaC is not just “use CloudFormation”: it is the control plane for consistency, governance, and repeatability. CloudFormation (or CDK → CloudFormation) provides verifiable templates, impact previews (Change Sets), drift audits, and org-wide rollouts (StackSets). Embedding tagging, encryption, alarms, and budgets in templates ensures compliance and cost control are **designed in**, not bolted on. When questions emphasize impact analysis, compliance drift, or multi-account scale, prefer Change Sets, Drift Detection, and StackSets respectively. CDK is an authoring convenience—not a different control plane—so the same governance mechanisms still apply.
 
 #### Change Management and Approvals
@@ -96,7 +95,6 @@ Q3: Developers need to submit CloudFormation updates themselves but must follow 
 A3: Have developers create CloudFormation Change Sets and route them through Change Manager, which enforces approval and scheduling policies.
 
 **Note**
-
 Change Manager governs infrastructure-level or high-risk updates—parameter tweaks, Auto Scaling policies, RDS sizing, IAM/SCP changes, CloudFormation stack updates—especially in regulated or production contexts. It supplies structured approvals (up to five stages), automatic CloudTrail logging, and strict runbook enforcement. High-frequency code releases stay in CI/CD pipelines (blue/green, canary, rolling) without manual gates; manual approval is reserved for sensitive, compliance-impacting, or high-cost changes. When stems emphasize multi-step approval, centralized audit, or controlled self-service, choose Change Manager (often in combination with Change Sets).
 
 #### AWS Configuration Management
@@ -416,8 +414,7 @@ A2: **AWS Proton**
 Q3: Thousands of short‑lived Lambda invocations are exhausting database connections. How do you reduce admin overhead and stabilize connections?  
 A3: **RDS Proxy**
 
-#### Note
-
+**Note**
 “Offload with managed services” is about shifting undifferentiated heavy lifting—cluster ops, patching, connection pooling, template governance—to AWS. Pick App Runner for turnkey container apps, Proton for standardized self‑service platforms, Fargate/Lambda for serverless compute, and RDS Proxy for managed DB pooling. When stems emphasize minimal ops effort, per‑request scaling, or controlled self‑service, default to these managed options over DIY clusters or custom pooling logic.
 
 ### 4. Delegating Complex Tasks to AWS
@@ -740,6 +737,413 @@ Centralised “sense and heal” combines:
 4. **Notification** (SNS, Chatbot).
 
 When stems emphasize “auto‑remediate,” “cross‑account visibility,” or “single pane,” map to CloudWatch → EventBridge → SSM and central SNS/Chatbot. For AZ‑level AWS failures, ARC autoshift plus AWS Health provides automated traffic evacuation beyond what stack‑local alarms can detect.
+
+## Task 2.3 - Determine security controls based on requirements
+
+### 1. Least Privilege IAM Design
+
+Designing **identity policies that grant only the permissions required—and nothing more—while proving it continuously**. This module explains the AWS tools that author, validate, and monitor IAM policies so you hit least privilege targets across accounts and Regions without slowing developers.
+
+- **IAM Access Analyzer – Policy Generation & Custom Checks:** Generates fine-grained policies based on CloudTrail activity and runs _pre-deployment_ “check-no-new-access / check-no-public-access” proofs to reject overly permissive updates.
+- **Unused Access Analyzer (Guided Revocation):** Highlights actions not used within 90 days and suggests policy shrinkage to eliminate permission creep.
+- **Permission Boundaries:** Upper guardrails that cap what a user or role can ever do, even if inline or attached policies grow.
+- **ABAC (Attribute-Based Access Control):** Uses tags or `aws:PrincipalTag` conditions so one policy scales across tenants, environments, or projects.
+- **Service Control Policies (SCPs):** Organization-level deny or allow lists that block entire permission families (e.g., `ec2:*`) regardless of what account admins attach.
+- **Identity Center Permission Sets:** Central, least-privilege role templates for workforce SSO across multiple accounts.
+- **IAM Roles Anywhere:** Issues short-lived credentials to on-prem services via X.509, avoiding persistent IAM users.
+- **FIDO2 Passkey MFA:** Device-bound passkeys as a second factor—reducing password risk while meeting MFA mandates.
+
+**Detect Over-Permission ↔ Access Analyzer Custom Checks**
+
+“CI/CD must fail if a policy grants public S3 access” → Run **check-no-public-access** in **IAM Access Analyzer** before merge.
+
+**Tighten Existing Policies ↔ Unused Access Analyzer**
+
+“Trim actions no one called in 90 days” → Accept **guided revocation** suggestions and update the policy.
+
+**Hard Stop Guardrails ↔ Permission Boundaries + SCPs**
+
+“Developers can only manage test VPCs” → Attach a **permission boundary** limiting resource tags; impose an **SCP** that denies `ec2:DeleteVpc` on prod tags.
+
+**Scalable One-Policy-Fits-All ↔ ABAC**
+
+“Role must access only its own project buckets” → Use condition `StringEquals: s3:ResourceTag/project = ${aws:PrincipalTag/project}`.
+
+Q1: A DevOps pipeline must reject any IAM policy update that grants new public access or expands to critical resources before deployment. Which feature enforces this automatically?  
+A1: **IAM Access Analyzer custom policy checks** (e.g., `check-no-public-access`, `check-no-new-access`).
+
+Q2: Security wants a quarterly report of unused IAM actions so policies can be tightened. Which capability provides the data and guided revocation?  
+A2: **IAM Access Analyzer unused access analysis (guided revocation).**
+
+Q3: An application role occasionally needs `s3:PutObject` into a prod bucket but must _never_ delete objects, regardless of future policy changes. How do you enforce this?  
+A3: **Attach a permission boundary** that denies `s3:DeleteObject` and allow `PutObject` only.
+
+Q4: A startup with hundreds of tenant IDs wants one role template that automatically limits access to each tenant’s resources. Which IAM model scales best?  
+A4: **ABAC using tags and `aws:PrincipalTag` conditions.**
+
+Q5: Compliance now mandates phishing-resistant MFA for all console users. Which recently added IAM method meets this with least friction?  
+A5: **FIDO2 passkey MFA (device-bound security keys).**
+
+Q6: On-prem services need to assume AWS roles securely without storing static keys. What AWS feature provides X.509-based short-lived credentials?  
+A6: **IAM Roles Anywhere.**
+
+### 2. Network Flow Control with SG and NACL
+
+Defining **inbound and outbound network flows** so every packet enters or leaves your VPC exactly where you intend. This module contrasts **stateful Security Groups** and **stateless Network ACLs**, introduces new rule-ID capabilities, and shows the analyzers that prove your design works.
+
+- **Security Group (SG):** Instance-level virtual firewall; _stateful_ (return traffic auto-allowed); contains only **allow** rules; now assigns a **unique rule ID** to each entry for precise API updates.
+- **Network ACL (NACL):** Subnet-level ACL; _stateless_ (responses need explicit rules); evaluates numbered **allow and deny** rules in ascending order.
+- **Prefix List:** Named CIDR set you reference in multiple SG/NACL rules to avoid copy-pasting IP ranges.
+- **VPC Reachability Analyzer:** Static path solver that pinpoints which SG/NACL/SNAT blocks traffic between two resources.
+- **Network Access Analyzer:** Policy-as-code engine that finds unintended network paths across security groups, NACLs, IGWs, and TGWs.
+- **Rule ID–Based ModifySecurityGroupRules API:** Granularly edits a single SG rule without replacing the full rule list.
+- **Best-Practice Defaults:** SG = deny-all inbound / allow-all outbound; NACL = allow-all both ways until you add numbered rules.
+
+**Stateful Simplicity ↔ Security Groups**
+
+“Need SSH inbound; return traffic should just work” → Add port 22 **allow** rule in **SG**; replies flow automatically.
+
+**Subnet Egress Lockdown ↔ NACL**
+
+“Block all ports except 443 out of the subnet” → Add outbound **deny \* rule #100**, then **allow TCP 443 rule #110** in **NACL**.
+
+**One-Line IP Block ↔ NACL Deny**
+
+“Malicious IP 203.0.113.45 must never reach any instance” → Insert **low-numbered inbound deny** rule in the subnet’s **NACL**.
+
+**Path Troubleshooting ↔ Reachability Analyzer**
+
+“Instance can’t reach RDS—who’s blocking it?” → Run **Reachability Analyzer**; output highlights offending SG/NACL rule.
+
+Q1: A dev team must block all outbound traffic from a private subnet except HTTPS while allowing inbound web traffic to an ALB. Which control is most appropriate?  
+A1: **Use a Network ACL**: outbound rule #100 deny \*, outbound rule #110 allow TCP 443; inbound rules allow TCP 80/443.
+
+Q2: Security needs to update a single ingress CIDR in an existing security group via API without replacing other rules. Which recent feature enables this?  
+A2: **Unique Security Group Rule IDs and the `ModifySecurityGroupRules` API**.
+
+Q3: An EC2 instance requires inbound TCP 22 from a bastion host and should not require extra rules for return traffic. Why is a security group preferable to a NACL?  
+A3: **Security groups are stateful—return packets are automatically allowed—whereas NACLs would need separate outbound rules.**
+
+Q4: After a VPC redesign, instances cannot reach a new Aurora cluster. Which tool pinpoints whether a security group, NACL, or route is blocking the path?  
+A4: **VPC Reachability Analyzer**.
+
+Q5: Compliance wants to ensure that no public CIDR appears in any security group going forward. What preventive control enforces this in CI/CD?  
+A5: **IAM Access Analyzer custom check `check-no-public-sg-rule` in the deployment pipeline.**
+
+Q6: Operations wants a reusable object representing the corporate CIDR to avoid editing 50 rules when the address block changes. Which feature solves this?  
+A6: **Create an Amazon VPC Prefix List and reference it in SG and NACL rules.**
+
+### 3. Web Application Attack Mitigation
+
+#### Shield Advanced
+
+On-demand **DDoS mitigation** across layers 3, 4, and 7, plus 24 × 7 expert response and cost-protection. This module shows how Shield Advanced integrates edge packet scrubbing, transport-layer quotas, and automatic AWS WAF rule groups so you can withstand volumetric floods without architecting bespoke defences.
+
+- **Shield Advanced Subscription:** Enables L3/L4/L7 DDoS detection and mitigation for Elastic IP, Load Balancer, CloudFront, Route 53, or Global Accelerator resources.
+- **Shield Response Team (SRT):** 24 × 7 humans on call for escalations, attack diagnostics, and custom mitigations.
+- **Cost-Protection Credits:** Refunds scaling charges (e.g., ELB, CloudFront) incurred during a verified attack.
+- **Automatic WAF Rule Groups:** Since June 2025, Shield deploys managed rule groups that block or rate-limit malicious HTTP traffic.
+- **Attack Dashboards (CloudWatch & Console):** Real-time metrics—pps, bps, request-per-second—in a single view.
+
+**Volumetric Network Flood ↔ Edge Packet Scrubbing**
+
+“ICMP or DNS amplification saturates bandwidth” → Shield scrubs packets at AWS border before your VPC sees them.
+
+**Transport SYN Flood ↔ Connection Quotas**
+
+“Millions of SYNs per second overflow NLB tables” → Shield’s L4 defence enforces SYN cookies and quotas.
+
+**Layer-7 HTTP Flood ↔ Auto WAF Rules**
+
+“Botnet hammers /login with POSTs” → Shield deploys AWS WAF rate-based rules automatically.
+
+**Incident Response ↔ SRT & Cost Credits**
+
+“Need immediate help and billing relief during attack” → Open a Shield Advanced support ticket; SRT guides, credits offset scaling costs.
+
+Q1: A gaming studio wants AWS to automatically block HTTP floods and provide human assistance during attacks. Which service covers both needs?  
+A1: **AWS Shield Advanced**.
+
+Q2: A SYN flood targets your Network Load Balancer, exhausting connection tables. How does Shield Advanced mitigate this?  
+A2: **Applies L4 connection quotas and SYN cookies via the AWS DDoS scrubbing fleet**.
+
+Q3: After enabling Shield Advanced, an ICMP amplification attack starts against an Elastic IP. Where is the traffic dropped?  
+A3: **At AWS edge locations before it reaches the VPC (L3 packet filtering)**.
+
+Q4: Finance is worried about unexpected scaling costs from a DDoS event. How can you address this concern natively?  
+A4: **Shield Advanced cost-protection credits reimburse DDoS-related scaling charges**.
+
+Q5: Security demands automatic, managed rules for layer-7 DDoS without manual WAF tuning. Which June 2025 feature satisfies this?  
+A5: **Shield Advanced automatic AWS WAF rule groups for L7 mitigation**.
+
+#### WAF Protection
+
+Protecting **web applications at OSI Layer 7** by inspecting HTTP(S) requests before they reach CloudFront, ALB, API Gateway, or App Runner. This module shows how custom and managed rules block injection, stop credential stuffing, and throttle bots—complementing Shield Advanced, which handles lower-layer DDoS.
+
+- **Web ACL (Web Access Control List):** Container for rules; attach to CloudFront, ALB, API Gateway, or App Runner.
+- **Managed Rule Groups:** Prebuilt, constantly updated protections for common exploits (e.g., SQL injection, XSS, Account Takeover Protection).
+- **Rate-Based Rules:** Throttle requests that exceed a defined request-per-5-minute threshold per IP or custom key.
+- **Custom Match Statements:** Inspect URI, query string, headers, cookies, body, or JSON for exact strings or regex.
+- **Rule Action Overrides:** Count, allow, block, or CAPTCHA/challenge malicious requests without code changes.
+
+**SQL Injection Defence ↔ Custom Regex or Managed Rule**
+
+“Block any request containing `union select`” → Add a **regex match rule** or enable the **SQL Injection Managed Rule Group** in the Web ACL.
+
+**Credential Stuffing Mitigation ↔ Account Takeover Protection**
+
+“Throttle failed login attempts across IP/user pairs” → Enable **Account Takeover Protection managed rules**; optionally add a **rate-based rule**.
+
+**Bot Scraping Control ↔ Rate-Based + Header Inspection**
+
+“Non-browser agents hammer product pages” → Combine a **header inspection rule** (User-Agent check) with a **rate-based rule** to block or challenge.
+
+**Automatic L7 DDoS Response ↔ Shield Advanced Integration**
+
+“Need auto WAF rules during L7 floods” → Subscribe to **Shield Advanced**; it deploys AWS WAF rule groups automatically.
+
+Q1: A SaaS team must block requests containing `union select` on `/search` with minimal operational work. Which service solves this?  
+A1: **AWS WAF** (custom regex or SQL Injection managed rule).
+
+Q2: Security wants to limit any IP to 100 requests per 5 minutes on `/api/orders`. Which WAF feature meets this requirement?  
+A2: **Rate-Based Rule** in the Web ACL.
+
+Q3: A login endpoint suffers from credential-stuffing attacks. How can you detect and block this using managed controls?  
+A3: **Enable the Account Takeover Protection managed rule group** in AWS WAF.
+
+Q4: Marketing wants to allow all search-engine bots but block unknown scrapers. How can you do this without code changes?  
+A4: **Create a header inspection rule allowing known User-Agents, plus a rate-based rule to block others** in AWS WAF.
+
+Q5: You already enabled Shield Advanced on an ALB. How does this help layer-7 protection automatically?  
+A5: **Shield Advanced deploys AWS WAF managed rule groups during L7 attacks**, blocking malicious requests without manual tuning.
+
+#### Web Application Threat Response Playbook
+
+Building a **defence-in-depth stack** that stops web exploits, volumetric floods, credential abuse, and configuration drift—all while keeping secrets safe and visibility high. This module weaves together edge caching, DDoS scrubbing, identity off-load, automated rotation, and central observability so production stays online under fire.
+
+- **CloudFront + AWS WAF Managed Rules:** Edge CDN that terminates TLS and caches content, paired with managed Layer-7 firewall rules for SQLi, XSS, bots, and account-takeover.
+- **Shield Advanced + Global Accelerator:** Subscription DDoS service for L3-L7 floods plus SRT and cost protection, fronted by anycast IPs that auto-fail-over between Regions.
+- **Amazon Cognito / IAM Identity Center + JWT Validation:** External identity providers issuing OIDC tokens; ALB or API Gateway validates JWTs before reaching micro-services.
+- **AWS KMS + Secrets Manager Rotation:** Envelope-encrypts secrets and rotates passwords or API keys automatically via Lambda without human touch.
+- **CloudWatch Logs / EventBridge + Security Lake / Security Hub:** Central log ingestion, cross-account event routing, OCSF-formatted lake storage, and single-pane findings aggregation.
+
+**Edge Exploit Blocking ↔ CloudFront and WAF**
+
+“Stop SQL injection and bots at the edge” → Enable **managed rule groups** on **CloudFront** so traffic is filtered before hitting the VPC.
+
+**Global DDoS Resilience ↔ Shield Advanced and Global Accelerator**
+
+“One anycast IP must survive L3-L7 floods and fail-over Regions” → Protect the **Global Accelerator** endpoint with **Shield Advanced**.
+
+**Stateless Authentication ↔ Cognito / Identity Center and JWT Validation**
+
+“Reject expired JWTs without code changes” → Configure **ALB OIDC authentication** or **API Gateway JWT authorizer** tied to **Cognito / Identity Center**.
+
+**Secret Rotation ↔ KMS and Secrets Manager**
+
+“Rotate RDS passwords every 30 days with zero downtime” → Use **Secrets Manager rotation** with **KMS-encrypted secrets**.
+
+**Cross-Account Observability ↔ CloudWatch, EventBridge, Security Lake, Security Hub**
+
+“Auto-remediate WAF-blocked IPs and retain raw logs for threat hunting” → Stream logs via **CloudWatch Logs**, trigger **EventBridge** for response, store in **Security Lake**, surface findings in **Security Hub**.
+
+Q1: A SaaS team must stop SQL-injection and bot scraping at the edge with minimal rule writing. Which service pair fits?  
+A1: **CloudFront with AWS WAF managed rules.**
+
+Q2: A gaming platform needs one global IP that withstands L3–L7 DDoS attacks and auto-fails over between Regions. Which AWS combo delivers this?  
+A2: **Shield Advanced with AWS Global Accelerator.**
+
+Q3: How do you reject expired JWTs without adding code to the micro-service?  
+A3: **Configure an ALB OIDC authentication action or API Gateway JWT authorizer linked to Cognito / Identity Center.**
+
+Q4: Compliance demands automatic rotation of RDS passwords every 30 days without downtime. Which services satisfy this?  
+A4: **Secrets Manager rotation powered by KMS-encrypted secrets.**
+
+Q5: You must auto-remediate WAF-blocked IPs in every account and keep raw logs for threat hunting. Which service trio meets the need?  
+A5: **CloudWatch Logs and EventBridge for real-time triggers, Security Lake for central log storage, Security Hub for finding aggregation.**
+
+### 4. Encryption for Data at Rest and Transit
+
+#### S3 Encryption Strategy
+
+Encrypting **objects at rest** so you meet compliance without rewriting code. This module clarifies when to rely on AWS-owned keys for speed and simplicity versus when to bring **AWS Key Management Service (KMS)** keys for audit, rotation, and tenant isolation.
+
+- **SSE-S3 (Server-Side Encryption with Amazon S3 managed keys):** AWS owns and automatically rotates the keys; fastest upload path, zero KMS throttling.
+- **SSE-KMS (Server-Side Encryption with KMS keys):** Uses a KMS key—AWS managed or customer managed—so you can set rotation, logging, and granular access policies; subject to KMS API limits.
+- **Default Encryption Setting:** Bucket-level switch that forces every PUT operation to apply either SSE-S3 or a chosen SSE-KMS key.
+
+**General Archival Data ↔ SSE-S3**
+
+“Back up TB-scale logs with minimal overhead” → Enable **Default Encryption: SSE-S3**; no extra IAM permissions or throttling.
+
+**Regulated, Audited Workloads ↔ SSE-KMS**
+
+“Each tenant needs its own key and decrypt audit log” → Require **SSE-KMS** with a **customer managed key (CMK)** and enforce encryption context in the bucket policy.
+
+**Per-Object Key Selection ↔ KMS Context**
+
+“App must tag objects by `tenant-id` and prove decryption mapping” → Pass `x-amz-server-side-encryption-aws-kms-key-id` and `x-amz-server-side-encryption-context` headers on each PUT.
+
+Q1: Security says every decrypt must be logged and traceable to a specific CMK. Which server-side encryption option meets this need?  
+A1: **SSE-KMS with a customer managed key**.
+
+Q2: A legacy backup tool cannot add encryption headers but compliance mandates encryption at rest. What is the quickest fix?  
+A2: **Turn on Bucket Default Encryption using SSE-S3.**
+
+Q3: A data lake stores sensitive PII and must rotate keys annually without re-encrypting objects. Which design satisfies this?  
+A3: **Use SSE-KMS with automatic key rotation enabled on the CMK**.
+
+Q4: An auditor detects occasional HTTP PUT requests to a bucket. How do you block non-TLS uploads without updating every client?  
+A4: **Add a bucket policy that denies requests with `"aws:SecureTransport": "false"`.**
+
+Q5: An application uploads 30,000 objects per second and now fails with `ThrottlingException` from KMS. What change eliminates the bottleneck while keeping encryption?  
+A5: **Switch the bucket to SSE-S3** (no KMS API calls, higher throughput).
+
+#### Multi Region Key Management
+
+Encrypting **data that moves across Regions** without exposing plaintext key material. A **Multi-Region Key (MRK)** is a matched pair of KMS keys—one in each Region—sharing the _same_ key ID and key material, with policies and rotation kept in sync by AWS. That symmetry lets EBS snapshots, Aurora Global Database, and DynamoDB Global Tables encrypt in one Region and decrypt in another transparently.
+
+- **Multi-Region Key (MRK):** Twin KMS keys in two Regions with identical key material and key ID; AWS syncs rotation and policy.
+- **Single-Region CMK:** Default KMS key that never leaves its home Region; cannot decrypt cross-Region data.
+- **Synchronized Rotation:** Automatic process where MRK copies rotate together so ciphertext stays decryptable in both Regions.
+- **Cross-Region Replication:** Services like Aurora Global Database, DynamoDB Global Tables, and EBS Snapshot Copy keep encryption intact via MRKs.
+
+**Aurora or DynamoDB Global ↔ MRK**
+
+“Encrypt in ap-southeast-2, replicate to us-east-1 with no key export” → Use an **MRK** so each Region has its own copy of the key.
+
+**Cross-Region EBS Snapshot ↔ MRK**
+
+“Copy an encrypted snapshot to another Region without re-encrypting” → Copy using **KMS MRK**; destination instantly decrypts.
+
+**Regulatory No-Plaintext Clause ↔ MRK**
+
+“Law forbids key material export between Regions” → Choose **MRK**—AWS clones the key inside each Region, never ships plaintext.
+
+Q1: A multinational bank replicates DynamoDB tables between `ap-southeast-2` and `us-east-1`. Compliance demands no plaintext key material cross Region. Which feature meets the requirement with least effort?  
+A1: **AWS KMS Multi-Region Keys.**
+
+Q2: You must copy an encrypted EBS snapshot from `eu-west-1` to `us-west-2` and attach it immediately. How can you avoid re-encrypting or manual key handling?  
+A2: **Use an MRK encrypted snapshot copy; the destination Region holds the twin key.**
+
+Q3: An Aurora Global Database in `us-east-1` fails to start in `eu-central-1` because the replica cannot decrypt the key. What change resolves this without altering code?  
+A3: **Migrate to an MRK (same key ID in both Regions) and enable rotation sync.**
+
+Q4: Security wants CloudTrail logs in each Region to show decrypt events locally, not remote calls. Which key design supports this?  
+A4: **MRK**—each Region’s copy handles decrypts, so CloudTrail records locally.
+
+Q5: A legacy app uses a single-Region CMK. After enabling cross-Region DynamoDB Global Tables, replication errors appear. What is the root cause and fix?  
+A5: **Root cause:** Single-Region CMK cannot decrypt in the replica Region.  
+**Fix:** **Create and use an MRK** for table encryption.
+
+#### Application and Load Balancer TLS Encryption
+
+Securing **TLS sessions at the edge** so clients—browsers, mobile apps, IoT devices, EC2 processes—connect through a managed front door that offloads certificates, enforces policies, and distributes traffic. This module covers when to use **Application Load Balancer (ALB)**, **Network Load Balancer (NLB)**, and **API Gateway** with options like mutual TLS (mTLS) and PrivateLink for fully private endpoints.
+
+- **Application Load Balancer (ALB):** Layer 7 HTTPS listener; integrates with AWS Certificate Manager (ACM) for automatic certificate renewal and TLS termination.
+- **Network Load Balancer (NLB):** Layer 4 TCP or TLS passthrough; ultra-low latency and static IP addresses; can present an ACM or imported certificate for TLS offload.
+- **Regional API Gateway:** Managed REST or HTTP API that supports mTLS to authenticate clients with X.509 certificates; can expose a **PrivateLink** endpoint to keep traffic inside the AWS network.
+- **Mutual TLS (mTLS):** Both client and server present certificates; validates client identity at connection time—ideal for B2B APIs and high-trust traffic.
+- **PrivateLink Interface Endpoint:** Creates a private, routable ENI so internal callers reach the service without traversing the public Internet.
+
+**HTTPS Termination at ALB ↔ ACM Certificate**
+
+“Public website must use HTTPS with automatic renewals” → Front the service with an **ALB** and attach an **ACM certificate**.
+
+**Low-Latency TLS Forwarding ↔ NLB**
+
+“Latency sensitive financial feed over TLS” → Use an **NLB** with TLS listener; attach an ACM certificate for offload or TCP passthrough if preferred.
+
+**Mutual TLS on Private API ↔ API Gateway plus PrivateLink**
+
+“Partner must present a client certificate and avoid public Internet” → Deploy **Regional API Gateway**, enable **mTLS**, and publish a **PrivateLink Interface Endpoint**.
+
+**Cross-Account Secure Exposure ↔ PrivateLink**
+
+“Expose internal micro-service to another AWS account privately” → NLB fronted service shares a **PrivateLink** endpoint; consumer VPC creates an **Interface Endpoint**.
+
+Q1: A public website running on ECS Fargate needs HTTPS with automatic certificate renewal. Which load balancer and service pairing meets this requirement?  
+A1: **Application Load Balancer with an ACM certificate**.
+
+Q2: A low-latency trading engine behind static IP addresses must terminate TLS in a single Availability Zone. Which option is best?  
+A2: **Network Load Balancer with TLS listener and ACM certificate**.
+
+Q3: A fintech partner must call your REST API with client certificate authentication and no public Internet exposure. What is the best AWS-native design?  
+A3: **Regional API Gateway with PrivateLink Interface Endpoint and mutual TLS enabled using an ACM-imported client CA**.
+
+Q4: You need to expose a Kubernetes service in Account A to micro-services in Account B without opening it publicly. Which native solution provides least operational overhead?  
+A4: **NLB in front of the service, shared through AWS PrivateLink**; consumers create **Interface Endpoints**.
+
+Q5: Security mandates that all backend targets receive traffic only from the load balancer, never directly from the Internet. What configuration ensures this?  
+A5: **Place targets in private subnets with no Internet gateway or NAT** and route all inbound traffic through the **ALB/NLB**, which resides in public subnets.
+
+### 5. Service Endpoint Configuration
+
+Creating **private entry points** so your VPC resources can reach AWS or SaaS services without touching the public Internet. This module explains the two endpoint types, how they differ, and when to choose each—especially under tight compliance rules that prohibit Internet gateways or NAT devices.
+
+- **Gateway Endpoint:** Route-table target that supports **Amazon S3** and **DynamoDB** only; traffic stays on the AWS backbone.
+- **Interface Endpoint / AWS PrivateLink:** Elastic network interface with a private IP; DNS for the service resolves to that IP, supporting any Regional AWS or SaaS service—even across Regions as of Nov 2024.
+
+**Private S3 or DynamoDB Access ↔ Gateway Endpoint**
+
+“Must write to S3 without Internet or NAT” → Add a **Gateway Endpoint** to the route table and (optionally) enforce it with a bucket policy using `aws:SourceVpce`.
+
+**Private API Call to AWS or SaaS Service ↔ Interface Endpoint**
+
+“Call a payment API privately inside the VPC” → Create an **Interface Endpoint**; security group allows outbound 443, DNS now resolves to the ENI’s 10.x address.
+
+**Cross-Region PrivateLink ↔ Interface Endpoint (Cross-Region Flag)**
+
+“From ap-southeast-2 reach a SaaS service in us-east-1 privately” → Enable **cross-Region Interface Endpoint**; AWS routes over its backbone, no public IPs involved.
+
+Q1: A compliance rule states: “No Internet gateway or NAT may be attached, yet the app must write audit files to Amazon S3.” Which design meets the requirement with minimal changes?  
+A1: **Create an S3 Gateway Endpoint and update the route table.**
+
+Q2: EC2 instances in a private subnet must write logs to S3 without using public IPs, NAT, or Internet gateways. What is the simplest solution?  
+A2: **Create an S3 Gateway Endpoint and add the endpoint ID to the bucket policy.**
+
+Q3: A VPC in Sydney needs to invoke a third-party SaaS API that is hosted in us-east-1 without exposing traffic to the Internet. Which feature enables this?  
+A3: **Create a cross-Region Interface Endpoint (AWS PrivateLink).**
+
+Q4: You need private, scalable access from multiple VPCs to an internal analytics service running behind a Network Load Balancer. Which endpoint type should you expose?  
+A4: **Interface Endpoint / AWS PrivateLink pointing to the NLB.**
+
+### 6. Patch and Configuration Compliance
+
+Keeping **OS patches and configuration drift** under a single policy-scan-fix loop so every EC2 instance, on-prem server, or hybrid VM stays compliant across all accounts and Regions. This module unpacks how **Systems Manager Patch Manager** defines what to patch, **Compliance** verifies reality, and optional auto-remediation tools close the gap—eliminating manual spreadsheets and ad-hoc scripts.
+
+- **Patch Manager:** Uses a **Patch Baseline** to specify OS families, CVE severities, and auto-approval delays; scans or installs patches on any node with the SSM Agent.
+- **Compliance Dashboard:** Continuously evaluates patch status and State Manager documents, rolling results into a single pane and aggregating via **Quick Setup** or **AWS Organizations**.
+- **State Manager:** Declaratively enforces that agents, files, and policies exist (e.g., CloudWatch Agent installed); feeds results to Compliance.
+- **Run Command / Automation:** On-demand or event-driven actions that remediate NON_COMPLIANT resources—patching, rebooting, or reconfiguring automatically.
+- **EventBridge Rule:** Detects a Compliance state change and triggers Run Command, State Manager, or Automation for hands-off fixes.
+
+**Org-Wide Patch Hygiene ↔ Patch Manager + Compliance**
+
+“Report and install critical patches after three days across 200 accounts” → **Patch Manager** baseline with auto-approval; nightly **scan**; **Compliance** dashboard shows red/green.
+
+**Configuration Drift Guardrail ↔ State Manager**
+
+“Ensure CloudWatch Agent and a custom IAM policy are always present” → **State Manager** document enforces presence; **Compliance** flags drift; optional **Automation** re-installs the agent.
+
+**Audit CSV Export ↔ Compliance API**
+
+“Weekly list of NON_COMPLIANT instances to S3 and Slack” → Lambda calls **Compliance API**, writes CSV to S3, posts summary to Slack.
+
+Q1: The security officer needs a weekly organisation-wide list of EC2 instances missing critical patches and wants them fixed automatically. Which Systems Manager features provide the MOST operationally efficient solution?  
+A1: **Patch Manager** for the baseline and scan, **Compliance** to surface NON_COMPLIANT nodes, and **Run Command or State Manager triggered by EventBridge** for remediation.
+
+Q2: All production servers must auto-approve “Critical” patches after seven days and reboot if required, but dev servers should never reboot. How can you enforce this?  
+A2: **Create two Patch Baselines** (prod vs. dev) with different auto-approval rules and assign them via **Patch Groups**; prod baseline enables reboot in the **Install Patch** stage.
+
+Q3: An auditor asks, “Which instances lacked the CloudWatch Agent during the last 30 days?” Where can you retrieve this without querying each box?  
+A3: **Systems Manager Compliance dashboard or API**, filtered on the State Manager association for CloudWatch Agent.
+
+Q4: You detect config drift on a web fleet—SSH is unexpectedly enabled. How do you auto-remediate while capturing evidence?  
+A4: **Compliance** marks NON_COMPLIANT; an **EventBridge rule** invokes an **Automation runbook** to disable SSH and logs the action in CloudTrail.
+
+Q5: Patch scans time out when run simultaneously on thousands of instances. What built-in feature orchestrates scanning safely?  
+A5: **Maintenance Window**—schedules Patch Manager tasks in controlled batches and respects resource concurrency limits.
 
 ## Task 2.4 - Design a strategy to meet reliability requirements
 
