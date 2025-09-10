@@ -63,13 +63,11 @@ A9: **Appliance mode VPC attachments in Cloud WAN** or **TGW inspection VPC** us
 Q10: What is the hard quota for VPC attachments per Transit Gateway (before you request an increase)?  
 A10: **5,000 attachments per TGW (soft limit, can be increased).**
 
-### 2. Connectivity options for on-premises co-location and cloud integration
-
 ### 2. Connectivity options for on-premises, co-location, and cloud integration
 
 Enterprises rarely live only in AWS—data centers, edge cages, and branch offices must all tie into the cloud with the right mix of **bandwidth, latency, encryption, and high availability**. This module walks through Direct Connect, VPN, SD-WAN, and Cloud WAN patterns so you can choose the lowest-cost, most resilient path for hybrid workloads—and recognize distractors around BGP timers, MACsec vs. IPsec, and multi-Region reach.
 
-- **AWS Direct Connect (DX)** — dedicated 1/10/100 Gbps circuits from on-prem to AWS; private routing, predictable latency, optional **MACsec** L2 encryption. :contentReference[oaicite:0]{index=0}
+- **AWS Direct Connect (DX)** — dedicated 1/10/100 Gbps circuits from on-prem to AWS; private routing, predictable latency, optional **MACsec** L2 encryption.
 - **Direct Connect Gateway (DX-GW)** — globally routes multiple VPCs/TGWs across Regions from a single DX; avoids per-Region VGWs.
 - **Direct Connect SiteLink** — lets two DX locations exchange traffic over AWS’s backbone without crossing a VPC; ideal for DC-to-DC replication.
 - **Link Aggregation Group (LAG)** — bonds 2–4 DX links (same speed, same LOA) as one, delivering up to 400 Gbps and sub-second fail-over.
@@ -77,8 +75,8 @@ Enterprises rarely live only in AWS—data centers, edge cages, and branch offic
 - **VPN CloudHub** — hub-and-spoke overlay that lets multiple on-prem sites communicate via VPN endpoints on the same VGW.
 - **TGW Connect (GRE/BGP)** — 5–50 Gbps GRE pipes into a Transit Gateway for SD-WAN appliances; preserves BGP metrics.
 - **SD-WAN (vendor)** — third-party edge devices that can dial TGW Connect or run over DX for dynamic path-selection.
-- **MACsec / IPsec encryption** — L2 vs. L3 encryption: MACsec now supported on Partner interconnects (2025), IPsec native to VPN. :contentReference[oaicite:1]{index=1}
-- **AWS Cloud WAN** — managed global SD-WAN with segments, policy-based routing, service insertion, and security-group referencing. :contentReference[oaicite:2]{index=2}
+- **MACsec / IPsec encryption** — L2 vs. L3 encryption: MACsec now supported on Partner interconnects (2025), IPsec native to VPN.
+- **AWS Cloud WAN** — managed global SD-WAN with segments, policy-based routing, service insertion, and security-group referencing.
 - **Local Zones / Edge Locations** — metro-AZs or PoPs where DX can terminate closer to users, reducing first-mile latency.
 
 **Dual DX with VPN Backup ↔ HA Hybrid**  
@@ -94,11 +92,11 @@ Enterprises rarely live only in AWS—data centers, edge cages, and branch offic
 “Vendor edge box needs 20 Gbps with dynamic routing into AWS” → deploy **TGW Connect** attachment; GRE avoids IPsec overhead.
 
 **Link Encryption Choice ↔ MACsec vs. IPsec**  
-“Compliance wants line-rate encryption on a 100 Gbps DX” → enable **MACsec** on the dedicated DX (now available on Partner interconnects). :contentReference[oaicite:3]{index=3}  
+“Compliance wants line-rate encryption on a 100 Gbps DX” → enable **MACsec** on the dedicated DX (now available on Partner interconnects).
 “Same requirement but over VPN” → use **IPsec** tunnels (1.25 Gbps each, scale with ECMP).
 
 **Global Segmentation & Inspection ↔ Cloud WAN**  
-“Need centralized firewall and prod/dev separation across Regions” → build **Cloud WAN** with segments + service insertion. :contentReference[oaicite:4]{index=4}
+“Need centralized firewall and prod/dev separation across Regions” → build **Cloud WAN** with segments + service insertion.
 
 Q1: An enterprise needs a single 10 Gbps link that can burst to 40 Gbps and fail over sub-second if a fiber is cut. Which DX feature satisfies this?  
 A1: **Link Aggregation Group (LAG)**.
@@ -110,7 +108,7 @@ Q3: Two on-prem data centers connected via DX want to exchange 3 Gbps of replica
 A3: **AWS Direct Connect SiteLink**.
 
 Q4: A security mandate requires 100 Gbps encrypted traffic over DX links without IPsec overhead. Which option meets this?  
-A4: **Enable MACsec on the dedicated DX**. :contentReference[oaicite:5]{index=5}
+A4: **Enable MACsec on the dedicated DX**.
 
 Q5: A branch SD-WAN appliance needs a 25 Gbps GRE tunnel into AWS with dynamic route updates. Which AWS feature enables this?  
 A5: **Transit Gateway Connect**.
@@ -122,7 +120,7 @@ Q7: During fail-over testing, your VPN backup takes 30 seconds to become active 
 A7: **Hold/Keepalive timers (BGP Dead-Peer Detection)**—lower hold-time to speed convergence.
 
 Q8: Compliance states that prod and dev traffic must be isolated globally and inspected by a third-party firewall cluster. Which 2025 service pattern solves this?  
-A8: **AWS Cloud WAN segments with service insertion**. :contentReference[oaicite:6]{index=6}
+A8: **AWS Cloud WAN segments with service insertion**.
 
 Q9: A startup has one DX into ap-southeast-2 but only an Internet connection in us-west-2. They need private, low-latency replication from on-prem to both Regions. What hybrid design meets cost and performance?  
 A9: **Single DX + DX-GW for ap-southeast-2** and **Site-to-Site VPN to us-west-2** (cheaper than second DX).
@@ -173,8 +171,8 @@ A2: **Wavelength Zone (carrier edge)**.
 Q3: A SaaS platform wants automatic, global traffic fail-over with the fastest possible TCP handshake from any continent. Which service fulfills this?  
 A3: **AWS Global Accelerator**.
 
-Q4: Two Regions are 80 ms apart. The database requires RPO 0 s. Which replication mode is mandatory?  
-A4: **Synchronous multi-AZ within one Region**; inter-Region can’t guarantee RPO 0 s at 80 ms.
+Q4: Two Regions are 80 ms apart. The database requires RPO 0s. Which replication mode is mandatory?  
+A4: **Synchronous multi-AZ within one Region**; inter-Region can’t guarantee RPO 0s at 80 ms.
 
 Q5: A compliance policy mandates that health-care records remain inside Canada. Which Regions are valid targets?  
 A5: **ca-central-1 only** (plus any localized Local/Wavelength Zones attached to it).
@@ -783,8 +781,6 @@ A9: **Enable ElastiCache Cluster-Mode and add shards (horizontal scale-out).**
 
 Q10: Large media uploads stall at 5 GB. Which S3 technique accelerates and parallelizes the upload?  
 A10: **Multipart upload with concurrent part uploads (horizontal client-side scaling).**
-
-### 4. Backup and restoration strategy
 
 ### 4. Backup and restoration strategy
 
