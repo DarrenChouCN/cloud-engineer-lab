@@ -1,10 +1,26 @@
-# AWS Certification Lab
+# Cloud Engineer Lab
 
-This repository contains a collection of resources, notes, and practical labs for preparing the following AWS certifications:
+Hands-on notes, study guides, and real-world labs for cloud certifications and SRE/DevOps practice.
 
-- SAP-C02: AWS Certified Solutions Architect – Professional
-- DOP-C02: AWS Certified DevOps Engineer – Professional
-- SCS-C02: AWS Certified Security – Specialty
+## Purpose
+- Build and document **practical cloud engineering skills**.
+- Prepare for certifications:
+  - AWS Solutions Architect – Professional (SAP-C02) ✅
+  - AWS DevOps Engineer – Professional (DOP-C02)
+  - AWS Security – Specialty (SCS-C02)
+  - HashiCorp Certified: Terraform Associate
+  - Kubernetes Administrator (CKA)
 
-It is designed for those pursuing a professional-level career in Cloud Engineering, DevOps, or Security Architecture.  
-Each section includes theoretical notes, exam tips, and hands-on projects.
+## Repo Structure
+
+```bash
+CLOUD-ENGINEER-LAB/
+├── AWS/
+│   ├── DevOps/
+│   ├── Security/
+│   └── Solution Architect/
+├── Terraform/
+├── Kubernetes/
+├── Azure/
+├── GCP/
+└── README.md
