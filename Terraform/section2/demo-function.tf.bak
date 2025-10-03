@@ -1,0 +1,32 @@
+variable "region" {
+  default = "ap-southeast-2"
+}
+
+provider "aws" {
+  region = var.region
+}
+
+variable "tags" {
+  type    = list(string)
+  default = ["first-ec2", "second-ec2"]
+}
+
+variable "ami" {
+  type = map(string)
+  default = {
+    "ap-northeast-1" = "ami-0d4aa492f133a3068"
+    "ap-south-1"     = "ami-0f9708d1cd2cfee41"
+    "ap-southeast-2" = "ami-0c462b53550d4fca8"
+  }
+}
+
+resource "aws_instance" "app-dev" {
+  ami           = lookup(var.ami, var.region)
+  instance_type = "t3.micro"
+  count         = length(var.tags)
+
+  tags = {
+    Name         = element(var.tags, count.index)
+    CreationData = formatdate("DD MM YYYY hh:mm ZZZ", timestamp())
+  }
+}
