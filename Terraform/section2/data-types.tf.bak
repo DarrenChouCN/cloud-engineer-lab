@@ -1,10 +1,24 @@
+# data type : list
 variable "my-list" {
   # "any" is a data type, such as number, string and so on
-  type = list(any)
+  type    = list(string)
+  default = ["hello", "world", "hello"]
 }
 
 output "variable_value" {
   value = var.my-list
+}
+
+
+# data type : set
+variable "my-set" {
+  type    = set(string)
+  default = ["hello", "world", "hello"]
+}
+
+# do not contain duplicate elements
+output "mylist" {
+  value = var.my-set
 }
 
 # security_group_ids should use list
@@ -37,3 +51,16 @@ resource "aws_instance" "myec2" {
   instance_type = var.list[1]
 }
 */
+
+
+# data type: object
+variable "my-object" {
+  type = object({
+    Name   = string,
+    userId = number
+  })
+}
+
+output "variable_value" {
+  value = var.my-object
+}
