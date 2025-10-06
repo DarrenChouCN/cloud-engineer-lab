@@ -1,0 +1,25 @@
+# Using terraform Registry example
+module "ec2-instance" {
+  source  = "terraform-aws-modules/ec2-instance/aws"
+  version = "6.1.1"
+}
+
+# eks module example (for test, do not create them, they are expensive)
+/*
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "21.3.1"
+  subnet_ids = [
+    "subnet-017ea3c8fcc05d9e5",
+    "subnet-04b447fe783d1284b",
+    "subnet-02250c42fdadcbb21"
+  ]
+}
+*/
+
+# Using local paths
+/*
+module "ec2" {
+  source = "../../modules/ec2"
+}
+*/
